@@ -1,0 +1,53 @@
+name: MacOS
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+    branches:
+      - "main"
+  schedule:
+    # Weekly tests run on main by default:
+    #   Scheduled workflows run on the latest commit on the default or base branch.
+    #   (from https://help.github.com/en/actions/reference/events-that-trigger-workflows#scheduled-events-schedule)
+    - cron: "0 0 * * 0"
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}, Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macOS-latest]
+        python-version: [3.9]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Additional info about the build
+        shell: bash
+        run: |
+          uname -a
+          df -h
+          ulimit -a
+
+      - uses: mamba-org/setup-micromamba@v1
+        with:
+          micromamba-version: '1.5.1-0'
+          environment-file: devtools/conda-envs/test_env.yaml
+          environment-name: test
+          create-args: >-
+            python=${{ matrix.python-version }}
+
+      - name: Install package
+        shell: bash -l {0}
+        run: |
+          cd openmm-opes/
+          pip install .
+          micromamba list
+
+      - name: Run tests
+        shell: bash -l {0}
+        run: |
+          pytest -m "not slow"

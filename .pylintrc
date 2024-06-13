@@ -1,0 +1,27 @@
+[MAIN]
+
+ignored-modules=openmm.unit
+ignore=_version.py
+extension-pkg-whitelist=openmm.app.internal.compiled
+
+[BASIC]
+
+method-naming-style=camelCase
+argument-naming-style=camelCase
+attr-naming-style=camelCase
+variable-naming-style=camelCase
+
+[DESIGN]
+
+max-locals=25  # Maximum number of local variables for function/method body
+max-attributes=10 # Maximum number of instance attributes for class
+
+[MESSAGES CONTROL]
+
+disable = unexpected-keyword-arg,  # Avoids false-positives with Context.getState method
+          too-many-arguments,
+          unnecessary-lambda-assignment
+
+[FORMAT]
+
+good-names=_,a,b,c,i,j,k,l,m,n,p,x,y,z

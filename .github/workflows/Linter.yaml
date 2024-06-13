@@ -1,0 +1,59 @@
+name: Linter
+
+on:
+  push:
+    branches:
+      - "main"
+  pull_request:
+    branches:
+      - "main"
+
+jobs:
+  linter:
+    name: Linter
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.9"]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Additional info about the build
+        shell: bash
+        run: |
+          uname -a
+          df -h
+          ulimit -a
+
+      - uses: mamba-org/setup-micromamba@v1
+        with:
+          micromamba-version: '1.5.1-0'
+          environment-file: devtools/conda-envs/lint_env.yaml
+          environment-name: linter
+          create-args: >-
+            python=${{ matrix.python-version }}
+
+      - name: Install package
+        shell: bash -l {0}
+        run: |
+          cd openmm-opes/
+          pip install .
+          micromamba list
+
+      - name: Run flake8
+        shell: bash -l {0}
+        run: flake8 openmm-opes/
+
+      - name: Run black
+        shell: bash -l {0}
+        run: black --diff --color openmm-opes/
+
+      - name: Run isort
+        shell: bash -l {0}
+        run: isort -v --check-only openmm-opes/
+
+      - name: Run pylint
+        shell: bash -l {0}
+        run: pylint openmm-opes/

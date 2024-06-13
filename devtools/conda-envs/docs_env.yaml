@@ -1,0 +1,20 @@
+name: docs
+channels:
+  - conda-forge, mdtools
+dependencies:
+    # Base dependencies
+  - python
+  - pip
+  - numpy
+  - openmm==7.7
+
+    # Testing
+  - pytest
+  - pytest-cov
+  - codecov
+  - cvpack
+
+  # Docs building
+  - sphinx
+  - sphinxcontrib-bibtex
+  - sphinx-copybutton

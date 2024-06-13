@@ -1,0 +1,41 @@
+{% set version = environ['OPENMM_OPES_VERSION'][1:] %}
+
+package:
+  name: openmm-opes
+  version: {{ version }}
+
+source:
+  git_url: ../../../
+
+build:
+  noarch: python
+  number: 0
+  script: python -m pip install --no-deps --ignore-installed .
+
+requirements:
+  host:
+    - python
+    - setuptools
+    - versioningit
+    - pip
+  run:
+    - python
+    - importlib-resources  # [py<310]
+    - typing_extensions  # [py<311]
+
+test:
+  imports:
+    - openmmopes
+
+about:
+  home: https://github.com/craabreu/openmm-opes
+  summary: On-the-fly Probability Enhanced Sampling for OpenMM
+  license: MIT
+  license_family: MIT
+  license_file: LICENSE
+  doc_url: https://openmm-opes.readthedocs.io/en/stable
+  dev_url: https://github.com/craabreu/openmm-opes
+
+extra:
+  recipe-maintainers:
+    - craabreu

@@ -1,0 +1,15 @@
+name: test
+channels:
+  - conda-forge, mdtools
+dependencies:
+    # Base depends
+  - python
+  - pip
+  - numpy
+  - openmm==7.7
+
+    # Testing
+  - pytest
+  - pytest-cov
+  - codecov
+  - cvpack

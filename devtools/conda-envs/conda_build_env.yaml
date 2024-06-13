@@ -1,0 +1,14 @@
+name: build
+channels:
+  - conda-forge
+dependencies:
+    # Base depends
+  - python
+  - pip
+  - numpy
+  - openmm==7.7
+
+    # Conda build
+  - anaconda-client
+  - conda-build
+  - boa
