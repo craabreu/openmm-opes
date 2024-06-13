@@ -1,7 +1,7 @@
 {% set version = environ['OPENMM_OPES_VERSION'][1:] %}
 
 package:
-  name: openmm-opes
+  name: openmmopes
   version: {{ version }}
 
 source:
@@ -28,13 +28,13 @@ test:
     - openmmopes
 
 about:
-  home: https://github.com/craabreu/openmm-opes
+  home: https://github.com/craabreu/openmmopes
   summary: On-the-fly Probability Enhanced Sampling for OpenMM
   license: MIT
   license_family: MIT
   license_file: LICENSE
-  doc_url: https://openmm-opes.readthedocs.io/en/stable
-  dev_url: https://github.com/craabreu/openmm-opes
+  doc_url: https://openmmopes.readthedocs.io/en/stable
+  dev_url: https://github.com/craabreu/openmmopes
 
 extra:
   recipe-maintainers:

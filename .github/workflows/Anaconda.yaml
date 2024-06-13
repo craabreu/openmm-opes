@@ -42,7 +42,7 @@ jobs:
         shell: bash -l {0}
         working-directory: ./devtools/conda-recipes/anaconda
         run: |
-          echo "::group::Building openmm-opes $OPENMM_OPES_VERSION"
+          echo "::group::Building openmmopes $OPENMM_OPES_VERSION"
           outdir=$(mktemp -d)
           export OPENMM_OPES_VERSION=${{ github.ref_name }}
           conda mambabuild . --no-anaconda-upload -c conda-forge --output-folder $outdir

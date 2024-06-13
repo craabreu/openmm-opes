@@ -38,22 +38,22 @@ jobs:
       - name: Install package
         shell: bash -l {0}
         run: |
-          cd openmm-opes/
+          cd openmmopes/
           pip install .
           micromamba list
 
       - name: Run flake8
         shell: bash -l {0}
-        run: flake8 openmm-opes/
+        run: flake8 openmmopes/
 
       - name: Run black
         shell: bash -l {0}
-        run: black --diff --color openmm-opes/
+        run: black --diff --color openmmopes/
 
       - name: Run isort
         shell: bash -l {0}
-        run: isort -v --check-only openmm-opes/
+        run: isort -v --check-only openmmopes/
 
       - name: Run pylint
         shell: bash -l {0}
-        run: pylint openmm-opes/
+        run: pylint openmmopes/

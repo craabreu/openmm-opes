@@ -43,7 +43,7 @@ jobs:
       - name: Install package
         shell: bash -l {0}
         run: |
-          cd openmm-opes/
+          cd openmmopes/
           pip install .
           micromamba list
 

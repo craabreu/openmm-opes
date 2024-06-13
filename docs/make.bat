@@ -9,7 +9,7 @@ if "%SPHINXBUILD%" == "" (
 )
 set SOURCEDIR=.
 set BUILDDIR=_build
-set SPHINXPROJ=openmm-opes
+set SPHINXPROJ=openmmopes
 
 if "%1" == "" goto help
 

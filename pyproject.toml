@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 # https://packaging.python.org/en/latest/specifications/declaring-project-metadata/
 [project]
 name = "openmmopes"
-description = "On-the-fly Probability Enhanced Sampling for OpenMM"
+description = "On-the-fly Probability Enhanced Sampling with OpenMM"
 dynamic = ["version"]
 readme = "README.md"
 authors = [
@@ -26,8 +26,8 @@ dependencies = [
 
 # Update the urls once the hosting is set up.
 #[project.urls]
-#"Source" = "https://github.com/<username>/openmm-opes/"
-#"Documentation" = "https://openmm-opes.readthedocs.io/"
+#"Source" = "https://github.com/<username>/openmmopes/"
+#"Documentation" = "https://openmmopes.readthedocs.io/"
 
 [project.optional-dependencies]
 test = [
@@ -62,9 +62,8 @@ where = ["."]
 
 # Ref https://setuptools.pypa.io/en/latest/userguide/datafiles.html#package-data
 [tool.setuptools.package-data]
-openmm-opes = [
-    "py.typed",
-    "data/ideal_alpha_helix.csv"
+openmmopes = [
+    "py.typed"
 ]
 
 [tool.versioningit]
@@ -83,7 +82,7 @@ match = ["v*"]
 default-tag = "0.0.0"
 
 [tool.versioningit.write]
-file = "openmm-opes/_version.py"
+file = "openmmopes/_version.py"
 
 [tool.isort]
 profile = "black"
@@ -97,6 +96,6 @@ rcfile = ".pylintrc"
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-v -ra --doctest-modules --cov=openmm-opes --cov-report=term --cov-report=html"
-testpaths = ["openmm-opes"]
+addopts = "-v -ra --doctest-modules --cov=openmmopes --cov-report=term --cov-report=html"
+testpaths = ["openmmopes"]
 markers = ["slow: marks tests as slow"]

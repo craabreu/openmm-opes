@@ -18,14 +18,14 @@
 import os
 import sys
 
-import openmm-opes  # pylint: disable=unused-import
+import openmmopes  # pylint: disable=unused-import
 
 sys.path.insert(0, os.path.abspath(".."))
 
 
 # -- Project information -----------------------------------------------------
 
-project = "OpenMM-OPES"
+project = "OpenMMOPES"
 copyright = "2024, Charlles Abreu | CMS Cookiecutter v1.1"
 author = "Charlles Abreu"
 
@@ -102,7 +102,7 @@ html_theme_options = {
     # 'logo_name': True,
     "github_button": False,
     "github_user": "craabreu",
-    "github_repo": "openmm-opes",
+    "github_repo": "openmmopes",
 }
 html_sidebars = {
     "**": ["about.html", "globaltoc.html", "searchbox.html"],
@@ -142,7 +142,7 @@ def setup(app):  # pylint: disable=missing-function-docstring
 # -- Options for HTMLHelp output ---------------------------------------------
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = "openmm-opes-doc"
+htmlhelp_basename = "openmmopes-doc"
 
 
 # -- Options for LaTeX output ------------------------------------------------
@@ -166,7 +166,7 @@ latex_elements = {
 # (source start file, target name, title,
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
-    (master_doc, "openmm-opes.tex", "OpenMM-OPES Documentation", "openmm-opes", "manual"),
+    (master_doc, "openmmopes.tex", "OpenMMOPES Documentation", "openmmopes", "manual"),
 ]
 
 
@@ -174,7 +174,7 @@ latex_documents = [
 
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
-man_pages = [(master_doc, "openmm-opes", "OpenMM-OPES Documentation", [author], 1)]
+man_pages = [(master_doc, "openmmopes", "OpenMMOPES Documentation", [author], 1)]
 
 
 # -- Options for Texinfo output ----------------------------------------------
@@ -185,10 +185,10 @@ man_pages = [(master_doc, "openmm-opes", "OpenMM-OPES Documentation", [author], 
 texinfo_documents = [
     (
         master_doc,
-        "openmm-opes",
-        "OpenMM-OPES Documentation",
+        "openmmopes",
+        "OpenMMOPES Documentation",
         author,
-        "openmm-opes",
+        "openmmopes",
         "On-the-fly Probability Enhanced Sampling for OpenMM",
         "Miscellaneous",
     ),
