@@ -24,6 +24,26 @@ VARIANCE_DECAY_TIME: int = 10
 
 @dataclass
 class BiasData:
+    """
+    Data structure to store the bias information.
+
+    Parameters
+    ----------
+    shape
+        The shape of the bias grid.
+
+    Attributes
+    ----------
+    logSumW
+        The logarithm of the sum of the weights.
+    logSumW2
+        The logarithm of the sum of the squared weights.
+    logAccInvDensity
+        The logarithm of the accumulated inverse probability density.
+    logAccGaussian
+        The logarithm of the accumulated Gaussians on a grid.
+    """
+
     logSumW: float
     logSumW2: float
     logAccInvDensity: float
@@ -36,31 +56,63 @@ class BiasData:
         self.logAccGaussian = np.full(shape, -np.inf)
 
     def addWeight(self, logWeight: float) -> None:
+        """
+        Add a weight to the bias data.
+
+        Parameters
+        ----------
+        logWeight
+            The logarithm of the weight to be added.
+        """
         self.logSumW = np.logaddexp(self.logSumW, logWeight)
         self.logSumW2 = np.logaddexp(self.logSumW2, 2 * logWeight)
 
     def getEffectiveSampleSize(self) -> float:
+        """Get the effective sample size."""
         return np.exp(2 * self.logSumW - self.logSumW2)
 
     def addGaussian(self, logWeight: float, logGaussian: np.ndarray) -> None:
+        """
+        Add a Gaussian to the bias data.
+
+        Parameters
+        ----------
+        logWeight
+            The logarithm of the weight of the Gaussian.
+        logGaussian
+            The logarithm of the Gaussian to be added.
+        """
         self.logAccGaussian = np.logaddexp(self.logAccGaussian, logWeight + logGaussian)
 
     def getLogPDF(self) -> np.ndarray:
+        """Get the logarithm of the probability density function on a grid."""
         return self.logAccGaussian - self.logSumW
 
     def getLogScaledPDF(self) -> np.ndarray:
+        """Get the logarithm of the scaled probability density function on a grid."""
         return self.logAccInvDensity - 2 * self.logSumW + self.logAccGaussian
 
     def addDensity(self, logWeight: float, logDensity: float) -> None:
+        """
+        Add a probability density sample to the bias data.
+
+        Parameters
+        ----------
+        logWeight
+            The logarithm of the weight of the density sample.
+        logDensity
+            The logarithm of the density to be added.
+        """
         self.logAccInvDensity = np.logaddexp(
             self.logAccInvDensity, logWeight - logDensity
         )
 
     def getLogMeanInvDensity(self) -> float:
+        """Get the logarithm of the mean inverse probability density."""
         return self.logAccInvDensity - self.logSumW
 
 
-class OPES:
+class OPES:  # pylint: disable=too-many-instance-attributes
     """Performs metadynamics.
 
     This class implements well-tempered metadynamics, as described in Barducci et al.,
@@ -137,24 +189,10 @@ class OPES:
             the directory to which biases should be written, and from which biases
             written by other processes should be loaded
         """
-        d = len(variables)
-        if not 1 <= d <= 3:
-            raise ValueError("OPES requires 1, 2, or 3 collective variables")
-        numPeriodics = sum(cv.periodic for cv in variables)
-        if numPeriodics not in [0, d]:
-            raise ValueError("OPES cannot handle mixed periodic/non-periodic variables")
         if not unit.is_quantity(temperature):
             temperature = temperature * unit.kelvin
         if not unit.is_quantity(barrier):
             barrier = barrier * unit.kilojoules_per_mole
-        biasFactor = barrier / (unit.MOLAR_GAS_CONSTANT_R * temperature)
-        if biasFactor <= 1.0:
-            raise ValueError("barrier must be greater than 1 kT")
-        if (saveFrequency is None) != (biasDir is None):
-            raise ValueError("Must specify both saveFrequency and biasDir")
-        if saveFrequency and (saveFrequency % frequency != 0):
-            raise ValueError("saveFrequency must be a multiple of frequency")
-
         self.variables = variables
         self.temperature = temperature
         self.barrier = barrier
@@ -162,6 +200,11 @@ class OPES:
         self.exploreMode = exploreMode
         self.biasDir = biasDir
         self.saveFrequency = saveFrequency
+
+        d = len(variables)
+        numPeriodics = sum(cv.periodic for cv in variables)
+        biasFactor = barrier / (unit.MOLAR_GAS_CONSTANT_R * temperature)
+        self._validate(d, numPeriodics, biasFactor)
 
         self._id = np.random.randint(0x7FFFFFFF)
         self._saveIndex = 0
@@ -171,10 +214,9 @@ class OPES:
         widths = [cv.gridWidth for cv in reversed(variables)]
         self._kT = unit.MOLAR_GAS_CONSTANT_R * temperature
         self._biasFactor = biasFactor
-        if exploreMode:
-            self._prefactor = (biasFactor - 1) * self._kT
-        else:
-            self._prefactor = (1 - 1 / biasFactor) * self._kT
+        self._prefactor = self._kT * (
+            (biasFactor - 1) if exploreMode else (1 - 1 / biasFactor)
+        )
         self._logEpsilon = -barrier / self._prefactor
         self._scaledGrid = [np.linspace(0, 1, cv.gridWidth) for cv in variables]
         self._means = np.array([(cv.minValue + cv.maxValue) / 2 for cv in variables])
@@ -205,6 +247,18 @@ class OPES:
             raise RuntimeError("All 32 force groups are already in use.")
         self._force.setForceGroup(max(freeGroups))
         system.addForce(self._force)
+
+    def _validate(self, d: int, numPeriodics: int, biasFactor: float) -> None:
+        if not 1 <= d <= 3:
+            raise ValueError("OPES requires 1, 2, or 3 collective variables")
+        if numPeriodics not in [0, d]:
+            raise ValueError("OPES cannot handle mixed periodic/non-periodic variables")
+        if biasFactor <= 1.0:
+            raise ValueError("barrier must be greater than 1 kT")
+        if (self.saveFrequency is None) != (self.biasDir is None):
+            raise ValueError("Must specify both saveFrequency and biasDir")
+        if self.saveFrequency and (self.saveFrequency % self.frequency != 0):
+            raise ValueError("saveFrequency must be a multiple of frequency")
 
     def _updateSampleVariances(
         self, currentStep: int, position: t.Tuple[float, ...]
@@ -341,16 +395,10 @@ class OPES:
 
         # Use a safe save to write out the biases to disk, then delete the older file.
 
-        oldName = os.path.join(
-            self.biasDir, "bias_%d_%d.npy" % (self._id, self._saveIndex)
-        )
+        oldName = os.path.join(self.biasDir, f"bias_{self._id}_{self._saveIndex}.npy")
         self._saveIndex += 1
-        tempName = os.path.join(
-            self.biasDir, "temp_%d_%d.npy" % (self._id, self._saveIndex)
-        )
-        fileName = os.path.join(
-            self.biasDir, "bias_%d_%d.npy" % (self._id, self._saveIndex)
-        )
+        tempName = os.path.join(self.biasDir, f"temp_{self._id}_{self._saveIndex}.npy")
+        fileName = os.path.join(self.biasDir, f"bias_{self._id}_{self._saveIndex}.npy")
         np.save(tempName, self._selfBias)
         os.rename(tempName, fileName)
         if os.path.exists(oldName):
