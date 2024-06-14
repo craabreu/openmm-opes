@@ -18,8 +18,7 @@ from openmm import app, unit
 from openmm.app.metadynamics import _LoadedBias
 
 LOG2PI = np.log(2 * np.pi)
-ADAPTIVE_VARIANCE: bool = True
-VARIANCE_DECAY_TIME: int = 10
+STATS_DECAY_WINDOW: int = 10
 
 
 @dataclass
@@ -54,6 +53,9 @@ class BiasData:
         self.logSumW2 = -np.inf
         self.logAccInvDensity = -np.inf
         self.logAccGaussian = np.full(shape, -np.inf)
+        d = len(shape)
+        self._prefactor = -2 / (d + 4)
+        self._offset = self._prefactor * np.log((d + 2) / 4)
 
     def addWeight(self, logWeight: float) -> None:
         """
@@ -67,22 +69,44 @@ class BiasData:
         self.logSumW = np.logaddexp(self.logSumW, logWeight)
         self.logSumW2 = np.logaddexp(self.logSumW2, 2 * logWeight)
 
-    def getEffectiveSampleSize(self) -> float:
-        """Get the effective sample size."""
-        return np.exp(2 * self.logSumW - self.logSumW2)
-
-    def addGaussian(self, logWeight: float, logGaussian: np.ndarray) -> None:
+    def selectBandwitdh(self, variances: np.ndarray) -> np.ndarray:
         """
-        Add a Gaussian to the bias data.
+        Select the bandwidth of the Gaussian kernel.
+
+        Parameters
+        ----------
+        variances
+            The variances of the Gaussian kernel.
+
+        Returns
+        -------
+        np.ndarray
+            The selected bandwidth.
+        """
+        logNeff = 2 * self.logSumW - self.logSumW2
+        logSilvermanFactor = self._prefactor * logNeff + self._offset
+        return np.exp(logSilvermanFactor) * variances
+
+    def addKernel(
+        self, logWeight: float, indices: t.Sequence[int], logGaussian: np.ndarray
+    ) -> None:
+        """
+        Add a Gaussian kernel to the bias data.
 
         Parameters
         ----------
         logWeight
-            The logarithm of the weight of the Gaussian.
+            The logarithm of the weight assigned to the kernel.
+        indices
+            The indices of the grid point that is nearest to the kernel center.
         logGaussian
-            The logarithm of the Gaussian to be added.
+            The logarithm of the Gaussian kernel on each grid point.
         """
         self.logAccGaussian = np.logaddexp(self.logAccGaussian, logWeight + logGaussian)
+        self.logAccInvDensity = np.logaddexp(
+            self.logAccInvDensity,
+            logWeight + self.logSumW - self.logAccGaussian[tuple(indices)],
+        )
 
     def getLogPDF(self) -> np.ndarray:
         """Get the logarithm of the probability density function on a grid."""
@@ -91,25 +115,6 @@ class BiasData:
     def getLogScaledPDF(self) -> np.ndarray:
         """Get the logarithm of the scaled probability density function on a grid."""
         return self.logAccInvDensity - 2 * self.logSumW + self.logAccGaussian
-
-    def addDensity(self, logWeight: float, logDensity: float) -> None:
-        """
-        Add a probability density sample to the bias data.
-
-        Parameters
-        ----------
-        logWeight
-            The logarithm of the weight of the density sample.
-        logDensity
-            The logarithm of the density to be added.
-        """
-        self.logAccInvDensity = np.logaddexp(
-            self.logAccInvDensity, logWeight - logDensity
-        )
-
-    def getLogMeanInvDensity(self) -> float:
-        """Get the logarithm of the mean inverse probability density."""
-        return self.logAccInvDensity - self.logSumW
 
 
 class OPES:  # pylint: disable=too-many-instance-attributes
@@ -156,6 +161,7 @@ class OPES:  # pylint: disable=too-many-instance-attributes
         temperature: unit.Quantity,
         barrier: unit.Quantity,
         frequency: int,
+        adaptiveVariance: bool = True,
         exploreMode: bool = False,
         saveFrequency: t.Optional[int] = None,
         biasDir: t.Union[os.PathLike, str, None] = None,
@@ -197,6 +203,7 @@ class OPES:  # pylint: disable=too-many-instance-attributes
         self.temperature = temperature
         self.barrier = barrier
         self.frequency = frequency
+        self.adaptiveVariance = adaptiveVariance
         self.exploreMode = exploreMode
         self.biasDir = biasDir
         self.saveFrequency = saveFrequency
@@ -204,7 +211,8 @@ class OPES:  # pylint: disable=too-many-instance-attributes
         d = len(variables)
         numPeriodics = sum(cv.periodic for cv in variables)
         biasFactor = barrier / (unit.MOLAR_GAS_CONSTANT_R * temperature)
-        self._validate(d, numPeriodics, biasFactor)
+        freeGroups = set(range(32)) - set(f.getForceGroup() for f in system.getForces())
+        self._validate(d, numPeriodics, biasFactor, freeGroups)
 
         self._id = np.random.randint(0x7FFFFFFF)
         self._saveIndex = 0
@@ -221,7 +229,7 @@ class OPES:  # pylint: disable=too-many-instance-attributes
         self._scaledGrid = [np.linspace(0, 1, cv.gridWidth) for cv in variables]
         self._means = np.array([(cv.minValue + cv.maxValue) / 2 for cv in variables])
         self._variances = np.array([cv.biasWidth**2 for cv in variables])
-        self._tau = VARIANCE_DECAY_TIME * self.frequency
+        self._tau = STATS_DECAY_WINDOW * self.frequency
         self._lengths = np.array([cv.maxValue - cv.minValue for cv in variables])
         self._lbounds = np.array([cv.minValue for cv in variables])
         self._widths = widths if d > 1 else []
@@ -242,13 +250,12 @@ class OPES:  # pylint: disable=too-many-instance-attributes
             *self._widths, table, *self._limits, self._periodic
         )
         self._force.addTabulatedFunction("table", self._table)
-        freeGroups = set(range(32)) - set(f.getForceGroup() for f in system.getForces())
-        if len(freeGroups) == 0:
-            raise RuntimeError("All 32 force groups are already in use.")
         self._force.setForceGroup(max(freeGroups))
         system.addForce(self._force)
 
-    def _validate(self, d: int, numPeriodics: int, biasFactor: float) -> None:
+    def _validate(
+        self, d: int, numPeriodics: int, biasFactor: float, freeGroups: set
+    ) -> None:
         if not 1 <= d <= 3:
             raise ValueError("OPES requires 1, 2, or 3 collective variables")
         if numPeriodics not in [0, d]:
@@ -259,6 +266,8 @@ class OPES:  # pylint: disable=too-many-instance-attributes
             raise ValueError("Must specify both saveFrequency and biasDir")
         if self.saveFrequency and (self.saveFrequency % self.frequency != 0):
             raise ValueError("saveFrequency must be a multiple of frequency")
+        if len(freeGroups) == 0:
+            raise RuntimeError("All 32 force groups are already in use.")
 
     def _updateSampleVariances(
         self, currentStep: int, position: t.Tuple[float, ...]
@@ -271,56 +280,6 @@ class OPES:  # pylint: disable=too-many-instance-attributes
         if self._periodic:
             self._means = self._lbounds + (self._means - self._lbounds) % self._lengths
         self._variances += x * ((1 - x) * delta**2 - self._variances)
-
-    def step(self, simulation: app.SimulatedTempering, steps: int) -> None:
-        """Advance the simulation by integrating a specified number of time steps.
-
-        Parameters
-        ----------
-        simulation: Simulation
-            the Simulation to advance
-        steps: int
-            the number of time steps to integrate
-        """
-        stepsToGo = steps
-        forceGroup = self._force.getForceGroup()
-        context = simulation.context
-        while stepsToGo > 0:
-            nextSteps = min(
-                stepsToGo, self.frequency - simulation.currentStep % self.frequency
-            )
-            if ADAPTIVE_VARIANCE:
-                for _ in range(nextSteps):
-                    simulation.step(1)
-                    position = self._force.getCollectiveVariableValues(context)
-                    self._updateSampleVariances(simulation.currentStep, position)
-            else:
-                simulation.step(nextSteps)
-            if simulation.currentStep % self.frequency == 0:
-                state = context.getState(getEnergy=True, groups={forceGroup})
-                energy = state.getPotentialEnergy()
-                position = self._force.getCollectiveVariableValues(context)
-                self._addGaussian(position, energy, context)
-            if self.saveFrequency and simulation.currentStep % self.saveFrequency == 0:
-                self._syncWithDisk()
-            stepsToGo -= nextSteps
-
-    def getFreeEnergy(self, reweighted: bool = True) -> np.ndarray:
-        """Get the free energy of the system as a function of the collective variables.
-
-        The result is returned as a N-dimensional NumPy array, where N is the number of
-        collective variables.  The values are in kJ/mole.  The i'th position along an
-        axis corresponds to minValue + i*(maxValue-minValue)/gridWidth.
-        """
-        if reweighted:
-            logPDF = self._totalReweight.getLogPDF()
-        else:
-            logPDF = self._totalBias.getLogPDF() / self._biasFactor
-        return -self._kT * logPDF
-
-    def getCollectiveVariables(self, simulation: app.Simulation) -> t.Tuple[float, ...]:
-        """Get the current values of all collective variables in a Simulation."""
-        return self._force.getCollectiveVariableValues(simulation.context)
 
     def _addGaussian(
         self, position: t.Tuple[float, ...], biasEnergy: float, context: mm.Context
@@ -349,24 +308,21 @@ class OPES:  # pylint: disable=too-many-instance-attributes
 
         logWeight = biasEnergy / self._kT
         self._totalReweight.addWeight(logWeight)
-        neff = self._totalReweight.getEffectiveSampleSize()
-        silverman = (neff * (d + 2) / 4) ** (-2 / (d + 4))
-        variances = silverman * self._variances / self._biasFactor
-        logGaussian = self._logGaussian(axisSquaredDistances, variances)
-        self._totalReweight.addGaussian(logWeight, logGaussian)
-        logPDF = self._totalReweight.getLogPDF()
-        self._totalReweight.addDensity(logWeight, logPDF[tuple(indices)])
+        logGaussian = self._logGaussian(
+            axisSquaredDistances,
+            self._totalReweight.selectBandwitdh(self._variances / self._biasFactor),
+        )
+        self._totalReweight.addKernel(logWeight, indices, logGaussian)
+
+        # If in explore mode, add the Gaussian to the biased PDF estimate.
 
         if self.exploreMode:
-            logWeight = biasEnergy / self._kT
             self._totalBias.addWeight(0)
-            neff = self._totalBias.getEffectiveSampleSize()
-            silverman = (neff * (d + 2) / 4) ** (-2 / (d + 4))
-            variances = silverman * self._variances
-            logGaussian = self._logGaussian(axisSquaredDistances, variances)
-            self._totalBias.addGaussian(0, logGaussian)
-            logPDF = self._totalBias.getLogPDF()
-            self._totalBias.addDensity(0, logPDF[tuple(indices)])
+            logGaussian = self._logGaussian(
+                axisSquaredDistances,
+                self._totalBias.selectBandwitdh(self._variances),
+            )
+            self._totalBias.addKernel(0, indices, logGaussian)
 
         potential = self._prefactor * np.logaddexp(
             self._totalBias.getLogScaledPDF().ravel(), self._logEpsilon
@@ -378,7 +334,8 @@ class OPES:  # pylint: disable=too-many-instance-attributes
         self, axisSquaredDistances: t.List[np.ndarray], variances: np.ndarray
     ) -> np.ndarray:
         axisExponents = [
-            -0.5 * sqd / var for sqd, var in zip(axisSquaredDistances, variances)
+            -0.5 * squaredDistances / variance
+            for squaredDistances, variance in zip(axisSquaredDistances, variances)
         ]
         d = len(self.variables)
         logHeight = -0.5 * (d * LOG2PI + np.log(variances).sum())
@@ -436,3 +393,53 @@ class OPES:  # pylint: disable=too-many-instance-attributes
             self._totalBias = np.copy(self._selfBias)
             for bias in self._loadedBiases.values():
                 self._totalBias += bias.bias
+
+    def step(self, simulation: app.SimulatedTempering, steps: int) -> None:
+        """Advance the simulation by integrating a specified number of time steps.
+
+        Parameters
+        ----------
+        simulation: Simulation
+            the Simulation to advance
+        steps: int
+            the number of time steps to integrate
+        """
+        stepsToGo = steps
+        forceGroup = self._force.getForceGroup()
+        context = simulation.context
+        while stepsToGo > 0:
+            nextSteps = min(
+                stepsToGo, self.frequency - simulation.currentStep % self.frequency
+            )
+            if self.adaptiveVariance:
+                for _ in range(nextSteps):
+                    simulation.step(1)
+                    position = self._force.getCollectiveVariableValues(context)
+                    self._updateSampleVariances(simulation.currentStep, position)
+            else:
+                simulation.step(nextSteps)
+            if simulation.currentStep % self.frequency == 0:
+                state = context.getState(getEnergy=True, groups={forceGroup})
+                energy = state.getPotentialEnergy()
+                position = self._force.getCollectiveVariableValues(context)
+                self._addGaussian(position, energy, context)
+            if self.saveFrequency and simulation.currentStep % self.saveFrequency == 0:
+                self._syncWithDisk()
+            stepsToGo -= nextSteps
+
+    def getFreeEnergy(self, reweighted: bool = True) -> np.ndarray:
+        """Get the free energy of the system as a function of the collective variables.
+
+        The result is returned as a N-dimensional NumPy array, where N is the number of
+        collective variables.  The values are in kJ/mole.  The i'th position along an
+        axis corresponds to minValue + i*(maxValue-minValue)/gridWidth.
+        """
+        if reweighted:
+            logPDF = self._totalReweight.getLogPDF()
+        else:
+            logPDF = self._totalBias.getLogPDF() / self._biasFactor
+        return -self._kT * logPDF
+
+    def getCollectiveVariables(self, simulation: app.Simulation) -> t.Tuple[float, ...]:
+        """Get the current values of all collective variables in a Simulation."""
+        return self._force.getCollectiveVariableValues(simulation.context)
