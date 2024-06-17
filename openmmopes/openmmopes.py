@@ -53,73 +53,6 @@ class BiasData:
         self.logSumW2 = -np.inf
         self.logAccInvDensity = -np.inf
         self.logAccGaussian = np.full(shape, -np.inf)
-        d = len(shape)
-        self._prefactor = -2 / (d + 4)
-        self._offset = self._prefactor * np.log((d + 2) / 4)
-
-    def addWeight(self, logWeight: float) -> None:
-        """
-        Add a weight to the bias data.
-
-        Parameters
-        ----------
-        logWeight
-            The logarithm of the weight to be added.
-        """
-        self.logSumW = np.logaddexp(self.logSumW, logWeight)
-        self.logSumW2 = np.logaddexp(self.logSumW2, 2 * logWeight)
-
-    def selectBandwitdh(self, variances: np.ndarray) -> np.ndarray:
-        """
-        Select the bandwidth of the Gaussian kernel.
-
-        Parameters
-        ----------
-        variances
-            The variances of the Gaussian kernel.
-
-        Returns
-        -------
-        np.ndarray
-            The selected bandwidth.
-        """
-        logNeff = 2 * self.logSumW - self.logSumW2
-        logSilvermanFactor = self._prefactor * logNeff + self._offset
-        return np.exp(logSilvermanFactor) * variances
-
-    def addKernel(
-        self, logWeight: float, indices: t.Sequence[int], logGaussian: np.ndarray
-    ) -> None:
-        """
-        Add a Gaussian kernel to the bias data.
-
-        Parameters
-        ----------
-        logWeight
-            The logarithm of the weight assigned to the kernel.
-        indices
-            The indices of the grid point that is nearest to the kernel center.
-        logGaussian
-            The logarithm of the Gaussian kernel on each grid point.
-        """
-        self.logAccGaussian = np.logaddexp(self.logAccGaussian, logWeight + logGaussian)
-        logDensity = self.logAccGaussian[tuple(reversed(indices))] - self.logSumW
-        # print(indices)
-        # print(f"logDensity = {logDensity}")
-        # import matplotlib.pyplot as plt
-        # plt.plot(self.logAccGaussian - self.logSumW)
-        # plt.show()
-        self.logAccInvDensity = np.logaddexp(
-            self.logAccInvDensity, logWeight - logDensity
-        )
-
-    def getLogPDF(self) -> np.ndarray:
-        """Get the logarithm of the probability density function on a grid."""
-        return self.logAccGaussian - self.logSumW
-
-    def getLogScaledPDF(self) -> np.ndarray:
-        """Get the logarithm of the scaled probability density function on a grid."""
-        return self.logAccInvDensity - 2 * self.logSumW + self.logAccGaussian
 
 
 class OPES(object):
@@ -219,19 +152,19 @@ class OPES(object):
         self._prefactor = prefactor.value_in_unit(unit.kilojoules_per_mole)
         self._logEpsilon = -barrier / prefactor
 
-        self._tau = 10 * frequency
+        self._tau = DECAY_WINDOW * frequency
         self._counter = 0
         self._bwFactor = 1.0 if exploreMode else 1.0 / np.sqrt(biasFactor)
 
         self._log_acc_inv_density = -np.inf
 
-        self._means = np.array([0.5 * (cv.minValue + cv.maxValue) for cv in variables])
-        self._variances = np.array([cv.biasWidth**2 for cv in variables])
+        self._sampleMean = None
+        self._sampleVariance = np.array([cv.biasWidth**2 for cv in variables])
         self._periodic = periodic
         self._lengths = np.array([cv.maxValue - cv.minValue for cv in variables])
         self._lbounds = np.array([cv.minValue for cv in variables])
 
-    def _updateMovingKernel(self, values: t.Tuple[float, ...]) -> None:
+    def _updateSampleStats(self, values):
         """
         Update the moving kernel used to estimate the bandwidth of the
 
@@ -240,16 +173,13 @@ class OPES(object):
         values
             The current values of the collective variables.
         """
-        delta = values - self._means
+        delta = values - self._sampleMean
         if self._periodic:
             delta -= self._lengths * np.round(delta / self._lengths)
-        x = 1 / self._tau
-        self._means += x * delta
+        self._sampleMean += delta / self._tau
         if self._periodic:
-            self._means = self._lbounds + (self._means - self._lbounds) % self._lengths
-        self._variances = self._counter * self._variances + delta**2
-        self._counter += 1
-        self._variances /= self._counter
+            self._sampleMean = self._lbounds + (self._sampleMean - self._lbounds) % self._lengths
+        self._sampleVariance += (delta**2 - self._sampleVariance) / self._tau
 
     def step(self, simulation, steps):
         """Advance the simulation by integrating a specified number of time steps.
@@ -263,26 +193,31 @@ class OPES(object):
         """
         stepsToGo = steps
         forceGroup = self._force.getForceGroup()
+        if self._sampleMean is None:
+            self._sampleMean = np.array(self.getCollectiveVariables(simulation))
         while stepsToGo > 0:
             nextSteps = stepsToGo
             nextSteps = min(
                 nextSteps, self.frequency - simulation.currentStep % self.frequency
             )
-            for _ in range(nextSteps):
-                simulation.step(1)
-                position = self._force.getCollectiveVariableValues(simulation.context)
-                self._updateMovingKernel(position)
+            if self.adaptiveVariance:
+                for _ in range(nextSteps):
+                    simulation.step(1)
+                    position = self.getCollectiveVariables(simulation)
+                    self._updateSampleStats(position)
+            else:
+                simulation.step(nextSteps)
             if simulation.currentStep % self.frequency == 0:
-                position = self._force.getCollectiveVariableValues(simulation.context)
+                position = self.getCollectiveVariables(simulation)
                 energy = simulation.context.getState(
                     getEnergy=True, groups={forceGroup}
                 ).getPotentialEnergy()
                 self._addGaussian(position, energy, simulation.context)
-            if (
-                self.saveFrequency is not None
-                and simulation.currentStep % self.saveFrequency == 0
-            ):
-                self._syncWithDisk()
+                if (
+                    self.saveFrequency is not None
+                    and simulation.currentStep % self.saveFrequency == 0
+                ):
+                    self._syncWithDisk()
             stepsToGo -= nextSteps
 
     def getFreeEnergy(self):
@@ -304,28 +239,6 @@ class OPES(object):
         return self._force.getCollectiveVariableValues(simulation.context)
 
     def _evaluateOnGrid(self, gridMarks, position, bandwidth, logWeight):
-        """
-        Return the natural logarithms of the kernel evaluated on a rectilinear grid and
-        the indices of the grid point that is closest to the kernel's position.
-
-        Parameters
-        ----------
-        gridMarks
-            The points in each dimension used to define the rectilinear grid. The length
-            of this list must match the dimensionality :math:`d` of the kernel. The size
-            :math:`N_i` of each array :math:`i` is arbitrary. For periodic dimensions,
-            it is assumed that the grid spans the entire periodic length, i.e. that the
-            last point differs from the first by the periodic length.
-
-        Returns
-        -------
-        Tuple[int, ...]
-            The indices of the grid point that is closest to the kernel's position.
-        np.ndarray
-            The logarithm of the kernel evaluated on the grid points. The shape of this
-            array is :math:`(N_d, \\ldots, N_2, N_1)`, which makes it compatible with
-            OpenMM's ``TabulatedFunction`` convention.
-        """
         distances = [points - x for points, x in zip(gridMarks, position)]
         if self._periodic:
             for dim, length in enumerate(self._lengths):
@@ -355,7 +268,7 @@ class OPES(object):
         d = len(self.variables)
         silverman = (neff * (d + 2) / 4) ** (-1 / (d + 4))
 
-        bandwidth = silverman * self._bwFactor * np.sqrt(self._variances)
+        bandwidth = silverman * self._bwFactor * np.sqrt(self._sampleVariance)
         indices, log_gaussian = self._evaluateOnGrid(
             self._grid, values, bandwidth, log_weight
         )
