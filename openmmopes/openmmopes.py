@@ -18,7 +18,7 @@ from openmm import app, unit
 from openmm.app.metadynamics import _LoadedBias
 
 LOG2PI = np.log(2 * np.pi)
-STATS_DECAY_WINDOW: int = 10
+DECAY_WINDOW: int = 10
 
 
 @dataclass
@@ -103,9 +103,14 @@ class BiasData:
             The logarithm of the Gaussian kernel on each grid point.
         """
         self.logAccGaussian = np.logaddexp(self.logAccGaussian, logWeight + logGaussian)
+        logDensity = self.logAccGaussian[tuple(reversed(indices))] - self.logSumW
+        # print(indices)
+        # print(f"logDensity = {logDensity}")
+        # import matplotlib.pyplot as plt
+        # plt.plot(self.logAccGaussian - self.logSumW)
+        # plt.show()
         self.logAccInvDensity = np.logaddexp(
-            self.logAccInvDensity,
-            logWeight + self.logSumW - self.logAccGaussian[tuple(indices)],
+            self.logAccInvDensity, logWeight - logDensity
         )
 
     def getLogPDF(self) -> np.ndarray:
@@ -117,233 +122,427 @@ class BiasData:
         return self.logAccInvDensity - 2 * self.logSumW + self.logAccGaussian
 
 
-class OPES:  # pylint: disable=too-many-instance-attributes
-    """Performs metadynamics.
+class Kernel:
+    """
+    A multivariate Gaussian kernel with diagonal bandwidth matrix.
 
-    This class implements well-tempered metadynamics, as described in Barducci et al.,
-    "Well-Tempered Metadynamics: A Smoothly Converging and Tunable Free-Energy Method"
-    (https://doi.org/10.1103/PhysRevLett.100.020603).  You specify from one to three
-    collective variables whose sampling should be accelerated.  A biasing force that
-    depends on the collective variables is added to the simulation.  Initially the bias
-    is zero.  As the simulation runs, Gaussian bumps are periodically added to the bias
-    at the current location of the simulation.  This pushes the simulation away from
-    areas
-    it has already explored, encouraging it to sample other regions.  At the end of the
-    simulation, the bias function can be used to calculate the system's free energy as a
-    function of the collective variables.
+    Parameters
+    ----------
+    variables
+        The collective variables that define the multidimensional domain of the kernel.
+    position
+        The point in space where the kernel is centered.
+    bandwidth
+        The bandwidth (standard deviation) of the kernel in each direction.
+    logWeight
+        The logarithm of the weight assigned to the kernel.
 
-    To use the class you create a Metadynamics object, passing to it the System you want
-    to simulate and a list of BiasVariable objects defining the collective variables.
-    It creates a biasing force and adds it to the System.  You then run the simulation
-    as usual, but call step() on the Metadynamics object instead of on the Simulation.
-
-    You can optionally specify a directory on disk where the current bias function
-    should
-    periodically be written.  In addition, it loads biases from any other files in the
-    same directory and includes them in the simulation.  It loads files when the
-    Metqdynamics object is first created, and also checks for any new files every time
-    it
-    updates its own bias on disk.
-
-    This serves two important functions.  First, it lets you stop a metadynamics run and
-    resume it later.  When you begin the new simulation, it will load the biases
-    computed
-    in the earlier simulation and continue adding to them.  Second, it provides an easy
-    way to parallelize metadynamics sampling across many computers.  Just point all of
-    them to a shared directory on disk.  Each process will save its biases to that
-    directory, and also load in and apply the biases added by other processes.
+    Attributes
+    ----------
+    position : np.ndarray
+        The point in space where the kernel is centered.
+    bandwidth : np.ndarray
+        The bandwidth (standard deviation) of the kernel in each direction.
+    logWeight : float
+        The logarithm of the weight assigned to the kernel.
+    logHeight : float
+        The logarithm of the kernel's height.
     """
 
     def __init__(
         self,
-        system: mm.System,
         variables: t.Sequence[app.BiasVariable],
-        temperature: unit.Quantity,
-        barrier: unit.Quantity,
-        frequency: int,
-        adaptiveVariance: bool = True,
-        exploreMode: bool = False,
-        saveFrequency: t.Optional[int] = None,
-        biasDir: t.Union[os.PathLike, str, None] = None,
-    ):
-        """Create a Metadynamics object.
+        position: t.Sequence[float],
+        bandwidth: t.Sequence[float],
+        logWeight: float,
+    ) -> None:
+        ndims = len(variables)
+        assert len(position) == len(bandwidth) == ndims
+        self.position = np.asarray(position)
+        self.bandwidth = np.asarray(bandwidth)
+        self.logWeight = logWeight
+        self._periodic = any(cv.periodic for cv in variables)
+        if self._periodic:
+            self._pdims = [i for i, cv in enumerate(variables) if cv.periodic]
+            self._lbounds = np.array([variables[i].minValue for i in self._pdims])
+            ubounds = np.array([variables[i].maxValue for i in self._pdims])
+            self._lengths = ubounds - self._lbounds
+        self.logHeight = self._computeLogHeight()
+
+    def _computeLogHeight(self) -> float:
+        if np.any(self.bandwidth == 0):
+            return -np.inf
+        ndims = len(self.bandwidth)
+        log2pi = np.log(2 * np.pi)
+        log_height = self.logWeight - ndims * log2pi / 2 - np.log(self.bandwidth).sum()
+        return log_height
+
+    def _squareMahalanobisDistances(self, points: np.ndarray) -> np.ndarray:
+        return np.square(self.displacement(points) / self.bandwidth).sum(axis=-1)
+
+    def displacement(self, endpoint: np.ndarray) -> np.ndarray:
+        """
+        Compute the displacement vector from the kernel's position to a given endpoint,
+        taking periodicity into account.
 
         Parameters
         ----------
-        system: System
-            the System to simulate.  A CustomCVForce implementing the bias is created
-            and added to the System.
-        variables: list of BiasVariables
-            the collective variables to sample
-        temperature: temperature
-            the temperature at which the simulation is being run.  This is used in
-            computing the free energy.
-        biasFactor: float
-            used in scaling the height of the Gaussians added to the bias.  The
-            collective variables are sampled as if the effective temperature of the
-            simulation were temperature*biasFactor.
-        height: energy
-            the initial height of the Gaussians to add
-        frequency: int
-            the interval in time steps at which Gaussians should be added to the bias
-            potential
-        saveFrequency: int (optional)
-            the interval in time steps at which to write out the current biases to disk.
-            At the same time it writes biases, it also checks for updated biases written
-            by other processes and loads them in.  This must be a multiple of frequency.
-        biasDir: str (optional)
-            the directory to which biases should be written, and from which biases
-            written by other processes should be loaded
+        endpoint
+            The endpoint to which the displacement vector is computed.
+
+        Returns
+        -------
+        np.ndarray
+            The displacement vector from the kernel's position to the endpoint.
         """
+        disp = endpoint - self.position
+        if self._periodic:
+            disp[..., self._pdims] -= self._lengths * np.round(
+                disp[..., self._pdims] / self._lengths
+            )
+        return disp
+
+    def endpoint(self, displacement: np.ndarray) -> np.ndarray:
+        """
+        Compute the endpoint of a displacement vector from the kernel's position
+
+        Parameters
+        ----------
+        displacement
+            The displacement vector from the kernel's position.
+
+        Returns
+        -------
+        np.ndarray
+            The endpoint of the displacement vector from the kernel's position.
+        """
+        end = self.position + displacement
+        if self._periodic:
+            end[..., self._pdims] = (
+                self._lbounds + (end[..., self._pdims] - self._lbounds) % self._lengths
+            )
+        return end
+
+    def findNearest(
+        self, points: np.ndarray, ignore: t.Sequence[int] = ()
+    ) -> t.Tuple[int, float]:
+        """
+        Given a list of points in space, return the index of the nearest one and the
+        squared Mahalanobis distance to it. Optionally ignore some points.
+
+        Parameters
+        ----------
+        points
+            The list of points to compare against. The shape of this array must be
+            :math:`(N, d)`, where :math:`N` is the number of points and :math:`d` is
+            the dimensionality of the kernel.
+        ignore
+            The indices of points to ignore.
+
+        Returns
+        -------
+        int
+            The index of the point (or -1 if no points are given)
+        float
+            The squared Mahalanobis distance to the closest point (or infinity if
+            no points are given)
+        """
+        if points.size == 0:
+            return -1, np.inf
+        sq_mahalanobis_distances = self._squareMahalanobisDistances(points)
+        if ignore:
+            sq_mahalanobis_distances[ignore] = np.inf
+        index = np.argmin(sq_mahalanobis_distances)
+        return index, sq_mahalanobis_distances[index]
+
+    def merge(self, other: "Kernel") -> None:
+        """
+        Change this kernel by merging it with another one.
+
+        Parameters
+        ----------
+        other
+            The kernel to merge with.
+        """
+        log_sum_weights = np.logaddexp(self.logWeight, other.logWeight)
+        w1 = np.exp(self.logWeight - log_sum_weights)
+        w2 = np.exp(other.logWeight - log_sum_weights)
+
+        displacement = self.displacement(other.position)
+        mean_position = self.endpoint(w2 * displacement)
+        mean_squared_bandwidth = w1 * self.bandwidth**2 + w2 * other.bandwidth**2
+
+        self.logWeight = log_sum_weights
+        self.position = mean_position
+        self.bandwidth = np.sqrt(mean_squared_bandwidth + w1 * w2 * displacement**2)
+        self.logHeight = self._computeLogHeight()
+
+    def evaluate(self, points: np.ndarray) -> t.Union[float, np.ndarray]:
+        """
+        Compute the natural logarithm of the kernel evaluated at the given point or
+        points.
+
+        Parameters
+        ----------
+        point
+            The point or points at which to evaluate the kernel. The shape of this
+            array must be either :math:`(d,)` or :math:`(N, d)`, where :math:`d` is
+            the dimensionality of the kernel and :math:`N` is the number of points.
+
+        Returns
+        -------
+        float
+            The logarithm of the kernel evaluated at the given point or points.
+        """
+        return self.logHeight - 0.5 * self._squareMahalanobisDistances(points)
+
+    def evaluateOnGrid(
+        self, gridMarks: t.Sequence[np.ndarray]
+    ) -> t.Tuple[t.Tuple[int, ...], np.ndarray]:
+        """
+        Return the natural logarithms of the kernel evaluated on a rectilinear grid and
+        the indices of the grid point that is closest to the kernel's position.
+
+        Parameters
+        ----------
+        gridMarks
+            The points in each dimension used to define the rectilinear grid. The length
+            of this list must match the dimensionality :math:`d` of the kernel. The size
+            :math:`N_i` of each array :math:`i` is arbitrary. For periodic dimensions,
+            it is assumed that the grid spans the entire periodic length, i.e. that the
+            last point differs from the first by the periodic length.
+
+        Returns
+        -------
+        Tuple[int, ...]
+            The indices of the grid point that is closest to the kernel's position.
+        np.ndarray
+            The logarithm of the kernel evaluated on the grid points. The shape of this
+            array is :math:`(N_d, \\ldots, N_2, N_1)`, which makes it compatible with
+            OpenMM's ``TabulatedFunction`` convention.
+        """
+        distances = [points - x for points, x in zip(gridMarks, self.position)]
+        if self._periodic:
+            for dim, length in zip(self._pdims, self._lengths):
+                distances[dim] -= length * np.round(distances[dim] / length)
+                distances[dim][-1] = distances[dim][0]
+        exponents = [
+            -0.5 * (distance / sigma) ** 2
+            for distance, sigma in zip(distances, self.bandwidth)
+        ]
+        indices = tuple(map(np.argmax, reversed(exponents)))
+        return indices, self.logHeight + reduce(np.add.outer, reversed(exponents))
+
+
+class OPES(object):
+    """Performs OPES."""
+
+    def __init__(
+        self,
+        system,
+        variables,
+        temperature,
+        barrier,
+        frequency,
+        exploreMode=False,
+        adaptiveVariance=True,
+        saveFrequency=None,
+        biasDir=None,
+    ):
         if not unit.is_quantity(temperature):
             temperature = temperature * unit.kelvin
         if not unit.is_quantity(barrier):
             barrier = barrier * unit.kilojoules_per_mole
+        biasFactor = barrier / (unit.MOLAR_GAS_CONSTANT_R * temperature)
+        if biasFactor <= 1.0:
+            raise ValueError("biasFactor must be > 1")
+        if (saveFrequency is None) != (biasDir is None):
+            raise ValueError("Must specify both saveFrequency and biasDir")
+        if saveFrequency and (saveFrequency % frequency != 0):
+            raise ValueError("saveFrequency must be a multiple of frequency")
+
         self.variables = variables
         self.temperature = temperature
-        self.barrier = barrier
         self.frequency = frequency
         self.adaptiveVariance = adaptiveVariance
         self.exploreMode = exploreMode
-        self.biasDir = biasDir
         self.saveFrequency = saveFrequency
-
-        d = len(variables)
-        numPeriodics = sum(cv.periodic for cv in variables)
-        biasFactor = barrier / (unit.MOLAR_GAS_CONSTANT_R * temperature)
-        freeGroups = set(range(32)) - set(f.getForceGroup() for f in system.getForces())
-        self._validate(d, numPeriodics, biasFactor, freeGroups)
+        self.biasDir = biasDir
 
         self._id = np.random.randint(0x7FFFFFFF)
         self._saveIndex = 0
+        self._selfBias = np.zeros(tuple(v.gridWidth for v in reversed(variables)))
+        # self._totalBias = np.zeros(tuple(v.gridWidth for v in reversed(variables)))
+        widths = [v.gridWidth for v in variables]
+        self._totalBias = np.full(np.prod(widths), -barrier / unit.kilojoules_per_mole)
+
         self._loadedBiases = {}
         self._syncWithDisk()
-
-        widths = [cv.gridWidth for cv in reversed(variables)]
-        self._kT = unit.MOLAR_GAS_CONSTANT_R * temperature
-        self._biasFactor = biasFactor
-        self._prefactor = self._kT * (
-            (biasFactor - 1) if exploreMode else (1 - 1 / biasFactor)
-        )
-        self._logEpsilon = -barrier / self._prefactor
-        self._scaledGrid = [np.linspace(0, 1, cv.gridWidth) for cv in variables]
-        self._means = np.array([(cv.minValue + cv.maxValue) / 2 for cv in variables])
-        self._variances = np.array([cv.biasWidth**2 for cv in variables])
-        self._tau = STATS_DECAY_WINDOW * self.frequency
-        self._lengths = np.array([cv.maxValue - cv.minValue for cv in variables])
-        self._lbounds = np.array([cv.minValue for cv in variables])
-        self._widths = widths if d > 1 else []
-        self._limits = sum(([cv.minValue, cv.maxValue] for cv in variables), [])
-        self._periodic = numPeriodics == d
-
-        self._totalReweight = BiasData(widths)
-        self._totalBias = BiasData(widths) if exploreMode else self._totalReweight
-        if saveFrequency:
-            self._selfBias = BiasData(widths)
-
-        varNames = [f"cv{i}" for i in range(d)]
-        self._force = mm.CustomCVForce(f"table({',  '.join(varNames)})")
-        for name, cv in zip(varNames, variables):
-            self._force.addCollectiveVariable(name, cv.force)
-        table = np.full(np.prod(widths), self._logEpsilon)
-        self._table = getattr(mm, f"Continuous{d}DFunction")(
-            *self._widths, table, *self._limits, self._periodic
-        )
+        varNames = ["cv%d" % i for i in range(len(variables))]
+        self._force = mm.CustomCVForce("table(%s)" % ", ".join(varNames))
+        for name, var in zip(varNames, variables):
+            self._force.addCollectiveVariable(name, var.force)
+        self._widths = widths if len(variables) > 1 else []
+        self._limits = sum(([v.minValue, v.maxValue] for v in variables), [])
+        numPeriodics = sum(v.periodic for v in variables)
+        if numPeriodics not in [0, len(variables)]:
+            raise ValueError(
+                "Metadynamics cannot handle mixed periodic/non-periodic variables"
+            )
+        periodic = numPeriodics == len(variables)
+        if len(variables) == 1:
+            self._table = mm.Continuous1DFunction(
+                self._totalBias.flatten(), *self._limits, periodic
+            )
+        elif len(variables) == 2:
+            self._table = mm.Continuous2DFunction(
+                *self._widths, self._totalBias.flatten(), *self._limits, periodic
+            )
+        elif len(variables) == 3:
+            self._table = mm.Continuous3DFunction(
+                *self._widths, self._totalBias.flatten(), *self._limits, periodic
+            )
+        else:
+            raise ValueError("Metadynamics requires 1, 2, or 3 collective variables")
         self._force.addTabulatedFunction("table", self._table)
+        freeGroups = set(range(32)) - set(
+            force.getForceGroup() for force in system.getForces()
+        )
+        if len(freeGroups) == 0:
+            raise RuntimeError(
+                "Cannot assign a force group to the metadynamics force. "
+                "The maximum number (32) of the force groups is already used."
+            )
         self._force.setForceGroup(max(freeGroups))
         system.addForce(self._force)
 
-    def _validate(
-        self, d: int, numPeriodics: int, biasFactor: float, freeGroups: set
-    ) -> None:
-        if not 1 <= d <= 3:
-            raise ValueError("OPES requires 1, 2, or 3 collective variables")
-        if numPeriodics not in [0, d]:
-            raise ValueError("OPES cannot handle mixed periodic/non-periodic variables")
-        if biasFactor <= 1.0:
-            raise ValueError("barrier must be greater than 1 kT")
-        if (self.saveFrequency is None) != (self.biasDir is None):
-            raise ValueError("Must specify both saveFrequency and biasDir")
-        if self.saveFrequency and (self.saveFrequency % self.frequency != 0):
-            raise ValueError("saveFrequency must be a multiple of frequency")
-        if len(freeGroups) == 0:
-            raise RuntimeError("All 32 force groups are already in use.")
+        kbt = unit.MOLAR_GAS_CONSTANT_R * temperature
+        self._kbt = kbt.in_units_of(unit.kilojoules_per_mole)
+        self._grid = [
+            np.linspace(cv.minValue, cv.maxValue, cv.gridWidth) for cv in variables
+        ]
+        self._logSumWeights = self._logSumWeightsSq = -np.inf
+        self._logPGrid = np.full([cv.gridWidth for cv in reversed(variables)], -np.inf)
 
-    def _updateSampleVariances(
-        self, currentStep: int, position: t.Tuple[float, ...]
-    ) -> None:
-        delta = np.array(position) - self._means
-        if self._periodic:
-            delta -= self._lengths * np.round(delta / self._lengths)
-        x = 1 / min(currentStep, self._tau)
-        self._means += x * delta
-        if self._periodic:
-            self._means = self._lbounds + (self._means - self._lbounds) % self._lengths
-        self._variances += x * ((1 - x) * delta**2 - self._variances)
-
-    def _addGaussian(
-        self, position: t.Tuple[float, ...], biasEnergy: float, context: mm.Context
-    ) -> None:
-        """Add a Gaussian to the bias function."""
-
-        # Compute square distances along each axis.
-
-        d = len(self.variables)
-        indices = []
-        axisSquaredDistances = []
-        for i in reversed(range(d)):
-            cv = self.variables[i]
-            x = (position[i] - cv.minValue) / self._lengths[i]
-            if cv.periodic:
-                x = x % 1.0
-            indices.append(round(x * (cv.gridWidth - 1)))
-            dist = self._scaledGrid[i] - x
-            if cv.periodic:
-                dist -= np.round(dist)
-                dist[-1] = dist[0]
-            dist *= self._lengths[i]
-            axisSquaredDistances.append(dist**2)
-
-        # Add the Gaussian to the unbiased PDF estimate.
-
-        logWeight = biasEnergy / self._kT
-        self._totalReweight.addWeight(logWeight)
-        logGaussian = self._logGaussian(
-            axisSquaredDistances,
-            self._totalReweight.selectBandwitdh(self._variances / self._biasFactor),
+        self._bias_factor = biasFactor
+        prefactor = (
+            (biasFactor - 1) * kbt if exploreMode else (1 - 1 / biasFactor) * kbt
         )
-        self._totalReweight.addKernel(logWeight, indices, logGaussian)
+        self._prefactor = prefactor.value_in_unit(unit.kilojoules_per_mole)
+        self._logEpsilon = -barrier / prefactor
 
-        # If in explore mode, add the Gaussian to the biased PDF estimate.
+        self._tau = 10 * frequency
+        self._movingKernel = Kernel(variables, *[np.zeros(len(variables))] * 2, 0.0)
+        self._counter = 0
+        self._bwFactor = 1.0 if exploreMode else 1.0 / np.sqrt(biasFactor)
+
+        self._log_acc_inv_density = -np.inf
+
+    def _updateMovingKernel(self, values: t.Tuple[float, ...]) -> None:
+        """
+        Update the moving kernel used to estimate the bandwidth of the
+
+        Parameters
+        ----------
+        values
+            The current values of the collective variables.
+        """
+        kernel = self._movingKernel
+        delta = kernel.displacement(values)
+        x = 1 / self._tau
+        kernel.position = kernel.endpoint(x * delta)
+        delta *= kernel.displacement(values)
+        variance = self._counter * kernel.bandwidth**2 + delta
+        self._counter += 1
+        kernel.bandwidth = np.sqrt(variance / self._counter)
+
+    def step(self, simulation, steps):
+        """Advance the simulation by integrating a specified number of time steps.
+
+        Parameters
+        ----------
+        simulation: Simulation
+            the Simulation to advance
+        steps: int
+            the number of time steps to integrate
+        """
+        stepsToGo = steps
+        forceGroup = self._force.getForceGroup()
+        while stepsToGo > 0:
+            nextSteps = stepsToGo
+            nextSteps = min(
+                nextSteps, self.frequency - simulation.currentStep % self.frequency
+            )
+            for _ in range(nextSteps):
+                simulation.step(1)
+                position = self._force.getCollectiveVariableValues(simulation.context)
+                self._updateMovingKernel(position)
+            if simulation.currentStep % self.frequency == 0:
+                position = self._force.getCollectiveVariableValues(simulation.context)
+                energy = simulation.context.getState(
+                    getEnergy=True, groups={forceGroup}
+                ).getPotentialEnergy()
+                self._addGaussian(position, energy, simulation.context)
+            if (
+                self.saveFrequency is not None
+                and simulation.currentStep % self.saveFrequency == 0
+            ):
+                self._syncWithDisk()
+            stepsToGo -= nextSteps
+
+    def getFreeEnergy(self):
+        """Get the free energy of the system as a function of the collective variables.
+
+        The result is returned as a N-dimensional NumPy array, where N is the number of
+        collective
+        variables.  The values are in kJ/mole.  The i'th position along an axis
+        corresponds to
+        minValue + i*(maxValue-minValue)/gridWidth.
+        """
+        free_energy = -self._kbt * (self._logPGrid - self._logSumWeights)
+        if self.exploreMode:
+            free_energy *= self._bias_factor
+        return free_energy
+
+    def getCollectiveVariables(self, simulation):
+        """Get the current values of all collective variables in a Simulation."""
+        return self._force.getCollectiveVariableValues(simulation.context)
+
+    def _addGaussian(self, values, energy, context):
+        """Add a Gaussian to the bias function."""
+        # Compute a Gaussian along each axis.
 
         if self.exploreMode:
-            self._totalBias.addWeight(0)
-            logGaussian = self._logGaussian(
-                axisSquaredDistances,
-                self._totalBias.selectBandwitdh(self._variances),
-            )
-            self._totalBias.addKernel(0, indices, logGaussian)
+            log_weight = 0
+        else:
+            log_weight = energy / self._kbt
 
-        potential = self._prefactor * np.logaddexp(
-            self._totalBias.getLogScaledPDF().ravel(), self._logEpsilon
+        self._logSumWeights = np.logaddexp(self._logSumWeights, log_weight)
+        self._logSumWeightsSq = np.logaddexp(self._logSumWeightsSq, 2 * log_weight)
+        neff = np.exp(2 * self._logSumWeights - self._logSumWeightsSq)
+        d = len(self.variables)
+        silverman = (neff * (d + 2) / 4) ** (-1 / (d + 4))
+
+        bandwidth = silverman * self._bwFactor * self._movingKernel.bandwidth
+        new_kernel = Kernel(self.variables, values, bandwidth, log_weight)
+        indices, log_gaussian = new_kernel.evaluateOnGrid(self._grid)
+
+        self._logPGrid = np.logaddexp(self._logPGrid, log_gaussian)
+        self._log_acc_inv_density = np.logaddexp(
+            self._log_acc_inv_density,
+            log_weight + self._logSumWeights - self._logPGrid[indices],
         )
-        self._table.setFunctionParameters(*self._widths, potential, *self._limits)
+
+        logP = self._logPGrid - self._logSumWeights
+        logZ = self._logSumWeights - self._log_acc_inv_density
+        self._table.setFunctionParameters(
+            *self._widths,
+            self._prefactor * np.logaddexp(logP - logZ, self._logEpsilon).flatten(),
+            *self._limits,
+        )
         self._force.updateParametersInContext(context)
 
-    def _logGaussian(
-        self, axisSquaredDistances: t.List[np.ndarray], variances: np.ndarray
-    ) -> np.ndarray:
-        axisExponents = [
-            -0.5 * squaredDistances / variance
-            for squaredDistances, variance in zip(axisSquaredDistances, variances)
-        ]
-        d = len(self.variables)
-        logHeight = -0.5 * (d * LOG2PI + np.log(variances).sum())
-        if d == 1:
-            return axisExponents[0] + logHeight
-        return reduce(np.add.outer, axisExponents) + logHeight
-
-    def _syncWithDisk(self) -> None:
+    def _syncWithDisk(self):
         """
         Save biases to disk, and check for updated files created by other processes.
         """
@@ -352,10 +551,16 @@ class OPES:  # pylint: disable=too-many-instance-attributes
 
         # Use a safe save to write out the biases to disk, then delete the older file.
 
-        oldName = os.path.join(self.biasDir, f"bias_{self._id}_{self._saveIndex}.npy")
+        oldName = os.path.join(
+            self.biasDir, "bias_%d_%d.npy" % (self._id, self._saveIndex)
+        )
         self._saveIndex += 1
-        tempName = os.path.join(self.biasDir, f"temp_{self._id}_{self._saveIndex}.npy")
-        fileName = os.path.join(self.biasDir, f"bias_{self._id}_{self._saveIndex}.npy")
+        tempName = os.path.join(
+            self.biasDir, "temp_%d_%d.npy" % (self._id, self._saveIndex)
+        )
+        fileName = os.path.join(
+            self.biasDir, "bias_%d_%d.npy" % (self._id, self._saveIndex)
+        )
         np.save(tempName, self._selfBias)
         os.rename(tempName, fileName)
         if os.path.exists(oldName):
@@ -393,53 +598,3 @@ class OPES:  # pylint: disable=too-many-instance-attributes
             self._totalBias = np.copy(self._selfBias)
             for bias in self._loadedBiases.values():
                 self._totalBias += bias.bias
-
-    def step(self, simulation: app.SimulatedTempering, steps: int) -> None:
-        """Advance the simulation by integrating a specified number of time steps.
-
-        Parameters
-        ----------
-        simulation: Simulation
-            the Simulation to advance
-        steps: int
-            the number of time steps to integrate
-        """
-        stepsToGo = steps
-        forceGroup = self._force.getForceGroup()
-        context = simulation.context
-        while stepsToGo > 0:
-            nextSteps = min(
-                stepsToGo, self.frequency - simulation.currentStep % self.frequency
-            )
-            if self.adaptiveVariance:
-                for _ in range(nextSteps):
-                    simulation.step(1)
-                    position = self._force.getCollectiveVariableValues(context)
-                    self._updateSampleVariances(simulation.currentStep, position)
-            else:
-                simulation.step(nextSteps)
-            if simulation.currentStep % self.frequency == 0:
-                state = context.getState(getEnergy=True, groups={forceGroup})
-                energy = state.getPotentialEnergy()
-                position = self._force.getCollectiveVariableValues(context)
-                self._addGaussian(position, energy, context)
-            if self.saveFrequency and simulation.currentStep % self.saveFrequency == 0:
-                self._syncWithDisk()
-            stepsToGo -= nextSteps
-
-    def getFreeEnergy(self, reweighted: bool = True) -> np.ndarray:
-        """Get the free energy of the system as a function of the collective variables.
-
-        The result is returned as a N-dimensional NumPy array, where N is the number of
-        collective variables.  The values are in kJ/mole.  The i'th position along an
-        axis corresponds to minValue + i*(maxValue-minValue)/gridWidth.
-        """
-        if reweighted:
-            logPDF = self._totalReweight.getLogPDF()
-        else:
-            logPDF = self._totalBias.getLogPDF() / self._biasFactor
-        return -self._kT * logPDF
-
-    def getCollectiveVariables(self, simulation: app.Simulation) -> t.Tuple[float, ...]:
-        """Get the current values of all collective variables in a Simulation."""
-        return self._force.getCollectiveVariableValues(simulation.context)
