@@ -14,7 +14,7 @@ from functools import reduce
 
 import numpy as np
 import openmm as mm
-from openmm import app, unit
+from openmm import unit
 from openmm.app.metadynamics import _LoadedBias
 
 LOG2PI = np.log(2 * np.pi)
@@ -22,7 +22,7 @@ DECAY_WINDOW: int = 10
 
 
 @dataclass
-class BiasData:
+class KernelDensityEstimate:
     """
     Data structure to store the bias information.
 
@@ -53,9 +53,53 @@ class BiasData:
         self.logSumW2 = -np.inf
         self.logAccInvDensity = -np.inf
         self.logAccGaussian = np.full(shape, -np.inf)
+        self.d = len(shape)
+
+    def _addWeight(self, weight: float) -> None:
+        self.logSumW = np.logaddexp(self.logSumW, weight)
+        self.logSumW2 = np.logaddexp(self.logSumW2, 2 * weight)
+
+    def _getBandwidthFactor(self) -> float:
+        neff = np.exp(2 * self.logSumW - self.logSumW2)
+        return (neff * (self.d + 2) / 4) ** (-2 / (self.d + 4))
+
+    def _addKernel(
+        self, logWeight: float, logGaussian: np.ndarray, indices: t.Sequence[int]
+    ) -> None:
+        self.logAccGaussian = np.logaddexp(self.logAccGaussian, logGaussian)
+        self.logAccInvDensity = np.logaddexp(
+            self.logAccInvDensity,
+            logWeight + self.logSumW - self.logAccGaussian[tuple(indices)],
+        )
+
+    def getLogPDF(self) -> np.ndarray:
+        return self.logAccGaussian - self.logSumW
+
+    def getBias(self, prefactor: float, logEpsilon: float) -> np.ndarray:
+        return prefactor * np.logaddexp(
+            self.logAccInvDensity - 2 * self.logSumW + self.logAccGaussian.ravel(),
+            logEpsilon,
+        )
+
+    def update(
+        self,
+        logWeight: float,
+        axisSquaredDistances: t.Sequence[np.ndarray],
+        variances: np.ndarray,
+    ):
+        self._addWeight(logWeight)
+        bandwidth = self._getBandwidthFactor() * variances
+        exponents = [
+            -0.5 * sqDistances / sqSigma
+            for sqDistances, sqSigma in zip(axisSquaredDistances, bandwidth)
+        ]
+        indices = tuple(map(np.argmax, reversed(exponents)))
+        logHeight = logWeight - 0.5 * (self.d * LOG2PI + np.log(bandwidth).sum())
+        logGaussian = logHeight + reduce(np.add.outer, reversed(exponents))
+        self._addKernel(logWeight, logGaussian, indices)
 
 
-class OPES(object):
+class OPES:
     """Performs OPES."""
 
     def __init__(
@@ -99,41 +143,26 @@ class OPES(object):
 
         self._loadedBiases = {}
         self._syncWithDisk()
-        varNames = ["cv%d" % i for i in range(len(variables))]
-        self._force = mm.CustomCVForce("table(%s)" % ", ".join(varNames))
+        d = len(variables)
+        varNames = [f"cv{i}" for i in range(d)]
+        self._force = mm.CustomCVForce(f"table({', '.join(varNames)})")
         for name, var in zip(varNames, variables):
             self._force.addCollectiveVariable(name, var.force)
         self._widths = widths if len(variables) > 1 else []
         self._limits = sum(([v.minValue, v.maxValue] for v in variables), [])
         numPeriodics = sum(v.periodic for v in variables)
-        if numPeriodics not in [0, len(variables)]:
-            raise ValueError(
-                "Metadynamics cannot handle mixed periodic/non-periodic variables"
-            )
-        periodic = numPeriodics == len(variables)
-        if len(variables) == 1:
-            self._table = mm.Continuous1DFunction(
-                self._totalBias.flatten(), *self._limits, periodic
-            )
-        elif len(variables) == 2:
-            self._table = mm.Continuous2DFunction(
-                *self._widths, self._totalBias.flatten(), *self._limits, periodic
-            )
-        elif len(variables) == 3:
-            self._table = mm.Continuous3DFunction(
-                *self._widths, self._totalBias.flatten(), *self._limits, periodic
-            )
-        else:
-            raise ValueError("Metadynamics requires 1, 2, or 3 collective variables")
-        self._force.addTabulatedFunction("table", self._table)
-        freeGroups = set(range(32)) - set(
-            force.getForceGroup() for force in system.getForces()
+        if numPeriodics not in [0, d]:
+            raise ValueError("OPES cannot handle mixed periodic/non-periodic variables")
+        periodic = numPeriodics == d
+        if not 1 <= d <= 3:
+            raise ValueError("OPES requires 1, 2, or 3 collective variables")
+        self._table = getattr(mm, f"Continuous{d}DFunction")(
+            *self._widths, self._totalBias.flatten(), *self._limits, periodic
         )
-        if len(freeGroups) == 0:
-            raise RuntimeError(
-                "Cannot assign a force group to the metadynamics force. "
-                "The maximum number (32) of the force groups is already used."
-            )
+        self._force.addTabulatedFunction("table", self._table)
+        freeGroups = set(range(32)) - set(f.getForceGroup() for f in system.getForces())
+        if not freeGroups:
+            raise RuntimeError("All 32 force groups are already in use.")
         self._force.setForceGroup(max(freeGroups))
         system.addForce(self._force)
 
@@ -142,10 +171,10 @@ class OPES(object):
         self._grid = [
             np.linspace(cv.minValue, cv.maxValue, cv.gridWidth) for cv in variables
         ]
-        self._logSumWeights = self._logSumWeightsSq = -np.inf
-        self._logPGrid = np.full([cv.gridWidth for cv in reversed(variables)], -np.inf)
+        shape = tuple(reversed(widths))
+        self._kde = KernelDensityEstimate(shape)
 
-        self._bias_factor = biasFactor
+        self._biasFactor = biasFactor
         prefactor = (
             (biasFactor - 1) * kbt if exploreMode else (1 - 1 / biasFactor) * kbt
         )
@@ -153,10 +182,6 @@ class OPES(object):
         self._logEpsilon = -barrier / prefactor
 
         self._tau = DECAY_WINDOW * frequency
-        self._counter = 0
-        self._bwFactor = 1.0 if exploreMode else 1.0 / np.sqrt(biasFactor)
-
-        self._log_acc_inv_density = -np.inf
 
         self._sampleMean = None
         self._sampleVariance = np.array([cv.biasWidth**2 for cv in variables])
@@ -178,7 +203,9 @@ class OPES(object):
             delta -= self._lengths * np.round(delta / self._lengths)
         self._sampleMean += delta / self._tau
         if self._periodic:
-            self._sampleMean = self._lbounds + (self._sampleMean - self._lbounds) % self._lengths
+            self._sampleMean = (
+                self._lbounds + (self._sampleMean - self._lbounds) % self._lengths
+            )
         self._sampleVariance += (delta**2 - self._sampleVariance) / self._tau
 
     def step(self, simulation, steps):
@@ -229,61 +256,51 @@ class OPES(object):
         corresponds to
         minValue + i*(maxValue-minValue)/gridWidth.
         """
-        free_energy = -self._kbt * (self._logPGrid - self._logSumWeights)
+        freeEnergy = -self._kbt * self._kde.getLogPDF()
         if self.exploreMode:
-            free_energy *= self._bias_factor
-        return free_energy
+            freeEnergy *= self._biasFactor
+        return freeEnergy
 
     def getCollectiveVariables(self, simulation):
         """Get the current values of all collective variables in a Simulation."""
         return self._force.getCollectiveVariableValues(simulation.context)
 
-    def _evaluateOnGrid(self, gridMarks, position, bandwidth, logWeight):
-        distances = [points - x for points, x in zip(gridMarks, position)]
-        if self._periodic:
-            for dim, length in enumerate(self._lengths):
-                distances[dim] -= length * np.round(distances[dim] / length)
-                distances[dim][-1] = distances[dim][0]
+    def _evaluateOnGrid(self, axisSquaredDistances, bandwidth, logWeight):
         exponents = [
-            -0.5 * (distance / sigma) ** 2
-            for distance, sigma in zip(distances, bandwidth)
+            -0.5 * sqDistances / sqSigma
+            for sqDistances, sqSigma in zip(axisSquaredDistances, bandwidth)
         ]
         indices = tuple(map(np.argmax, reversed(exponents)))
-        d = len(position)
-        logHeight = logWeight - 0.5 * d * LOG2PI - np.log(bandwidth).sum()
+        d = len(self.variables)
+        logHeight = logWeight - 0.5 * (d * LOG2PI + np.log(bandwidth).sum())
         return indices, logHeight + reduce(np.add.outer, reversed(exponents))
 
     def _addGaussian(self, values, energy, context):
         """Add a Gaussian to the bias function."""
         # Compute a Gaussian along each axis.
 
+        axisSquaredDistances = []
+        for value, nodes, length in zip(values, self._grid, self._lengths):
+            distances = nodes - value
+            if self._periodic:
+                distances -= length * np.round(distances / length)
+            axisSquaredDistances.append(distances**2)
+
         if self.exploreMode:
-            log_weight = 0
+            logWeight = 0
         else:
-            log_weight = energy / self._kbt
+            logWeight = energy / self._kbt
 
-        self._logSumWeights = np.logaddexp(self._logSumWeights, log_weight)
-        self._logSumWeightsSq = np.logaddexp(self._logSumWeightsSq, 2 * log_weight)
-        neff = np.exp(2 * self._logSumWeights - self._logSumWeightsSq)
-        d = len(self.variables)
-        silverman = (neff * (d + 2) / 4) ** (-1 / (d + 4))
+        kde = self._kde
 
-        bandwidth = silverman * self._bwFactor * np.sqrt(self._sampleVariance)
-        indices, log_gaussian = self._evaluateOnGrid(
-            self._grid, values, bandwidth, log_weight
-        )
+        bandwidth = self._sampleVariance
+        if not self.exploreMode:
+            bandwidth /= self._biasFactor
+        kde.update(logWeight, axisSquaredDistances, bandwidth)
 
-        self._logPGrid = np.logaddexp(self._logPGrid, log_gaussian)
-        self._log_acc_inv_density = np.logaddexp(
-            self._log_acc_inv_density,
-            log_weight + self._logSumWeights - self._logPGrid[indices],
-        )
-
-        logP = self._logPGrid - self._logSumWeights
-        logZ = self._logSumWeights - self._log_acc_inv_density
         self._table.setFunctionParameters(
             *self._widths,
-            self._prefactor * np.logaddexp(logP - logZ, self._logEpsilon).flatten(),
+            kde.getBias(self._prefactor, self._logEpsilon),
             *self._limits,
         )
         self._force.updateParametersInContext(context)
@@ -297,16 +314,10 @@ class OPES(object):
 
         # Use a safe save to write out the biases to disk, then delete the older file.
 
-        oldName = os.path.join(
-            self.biasDir, "bias_%d_%d.npy" % (self._id, self._saveIndex)
-        )
+        oldName = os.path.join(self.biasDir, f"bias_{self._id}_{self._saveIndex}.npy")
         self._saveIndex += 1
-        tempName = os.path.join(
-            self.biasDir, "temp_%d_%d.npy" % (self._id, self._saveIndex)
-        )
-        fileName = os.path.join(
-            self.biasDir, "bias_%d_%d.npy" % (self._id, self._saveIndex)
-        )
+        tempName = os.path.join(self.biasDir, f"temp_{self._id}_{self._saveIndex}.npy")
+        fileName = os.path.join(self.biasDir, f"bias_{self._id}_{self._saveIndex}.npy")
         np.save(tempName, self._selfBias)
         os.rename(tempName, fileName)
         if os.path.exists(oldName):
