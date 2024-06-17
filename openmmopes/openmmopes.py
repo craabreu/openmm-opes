@@ -122,218 +122,6 @@ class BiasData:
         return self.logAccInvDensity - 2 * self.logSumW + self.logAccGaussian
 
 
-class Kernel:
-    """
-    A multivariate Gaussian kernel with diagonal bandwidth matrix.
-
-    Parameters
-    ----------
-    variables
-        The collective variables that define the multidimensional domain of the kernel.
-    position
-        The point in space where the kernel is centered.
-    bandwidth
-        The bandwidth (standard deviation) of the kernel in each direction.
-    logWeight
-        The logarithm of the weight assigned to the kernel.
-
-    Attributes
-    ----------
-    position : np.ndarray
-        The point in space where the kernel is centered.
-    bandwidth : np.ndarray
-        The bandwidth (standard deviation) of the kernel in each direction.
-    logWeight : float
-        The logarithm of the weight assigned to the kernel.
-    logHeight : float
-        The logarithm of the kernel's height.
-    """
-
-    def __init__(
-        self,
-        variables: t.Sequence[app.BiasVariable],
-        position: t.Sequence[float],
-        bandwidth: t.Sequence[float],
-        logWeight: float,
-    ) -> None:
-        ndims = len(variables)
-        assert len(position) == len(bandwidth) == ndims
-        self.position = np.asarray(position)
-        self.bandwidth = np.asarray(bandwidth)
-        self.logWeight = logWeight
-        self._periodic = any(cv.periodic for cv in variables)
-        if self._periodic:
-            self._pdims = [i for i, cv in enumerate(variables) if cv.periodic]
-            self._lbounds = np.array([variables[i].minValue for i in self._pdims])
-            ubounds = np.array([variables[i].maxValue for i in self._pdims])
-            self._lengths = ubounds - self._lbounds
-        self.logHeight = self._computeLogHeight()
-
-    def _computeLogHeight(self) -> float:
-        if np.any(self.bandwidth == 0):
-            return -np.inf
-        ndims = len(self.bandwidth)
-        log2pi = np.log(2 * np.pi)
-        log_height = self.logWeight - ndims * log2pi / 2 - np.log(self.bandwidth).sum()
-        return log_height
-
-    def _squareMahalanobisDistances(self, points: np.ndarray) -> np.ndarray:
-        return np.square(self.displacement(points) / self.bandwidth).sum(axis=-1)
-
-    def displacement(self, endpoint: np.ndarray) -> np.ndarray:
-        """
-        Compute the displacement vector from the kernel's position to a given endpoint,
-        taking periodicity into account.
-
-        Parameters
-        ----------
-        endpoint
-            The endpoint to which the displacement vector is computed.
-
-        Returns
-        -------
-        np.ndarray
-            The displacement vector from the kernel's position to the endpoint.
-        """
-        disp = endpoint - self.position
-        if self._periodic:
-            disp[..., self._pdims] -= self._lengths * np.round(
-                disp[..., self._pdims] / self._lengths
-            )
-        return disp
-
-    def endpoint(self, displacement: np.ndarray) -> np.ndarray:
-        """
-        Compute the endpoint of a displacement vector from the kernel's position
-
-        Parameters
-        ----------
-        displacement
-            The displacement vector from the kernel's position.
-
-        Returns
-        -------
-        np.ndarray
-            The endpoint of the displacement vector from the kernel's position.
-        """
-        end = self.position + displacement
-        if self._periodic:
-            end[..., self._pdims] = (
-                self._lbounds + (end[..., self._pdims] - self._lbounds) % self._lengths
-            )
-        return end
-
-    def findNearest(
-        self, points: np.ndarray, ignore: t.Sequence[int] = ()
-    ) -> t.Tuple[int, float]:
-        """
-        Given a list of points in space, return the index of the nearest one and the
-        squared Mahalanobis distance to it. Optionally ignore some points.
-
-        Parameters
-        ----------
-        points
-            The list of points to compare against. The shape of this array must be
-            :math:`(N, d)`, where :math:`N` is the number of points and :math:`d` is
-            the dimensionality of the kernel.
-        ignore
-            The indices of points to ignore.
-
-        Returns
-        -------
-        int
-            The index of the point (or -1 if no points are given)
-        float
-            The squared Mahalanobis distance to the closest point (or infinity if
-            no points are given)
-        """
-        if points.size == 0:
-            return -1, np.inf
-        sq_mahalanobis_distances = self._squareMahalanobisDistances(points)
-        if ignore:
-            sq_mahalanobis_distances[ignore] = np.inf
-        index = np.argmin(sq_mahalanobis_distances)
-        return index, sq_mahalanobis_distances[index]
-
-    def merge(self, other: "Kernel") -> None:
-        """
-        Change this kernel by merging it with another one.
-
-        Parameters
-        ----------
-        other
-            The kernel to merge with.
-        """
-        log_sum_weights = np.logaddexp(self.logWeight, other.logWeight)
-        w1 = np.exp(self.logWeight - log_sum_weights)
-        w2 = np.exp(other.logWeight - log_sum_weights)
-
-        displacement = self.displacement(other.position)
-        mean_position = self.endpoint(w2 * displacement)
-        mean_squared_bandwidth = w1 * self.bandwidth**2 + w2 * other.bandwidth**2
-
-        self.logWeight = log_sum_weights
-        self.position = mean_position
-        self.bandwidth = np.sqrt(mean_squared_bandwidth + w1 * w2 * displacement**2)
-        self.logHeight = self._computeLogHeight()
-
-    def evaluate(self, points: np.ndarray) -> t.Union[float, np.ndarray]:
-        """
-        Compute the natural logarithm of the kernel evaluated at the given point or
-        points.
-
-        Parameters
-        ----------
-        point
-            The point or points at which to evaluate the kernel. The shape of this
-            array must be either :math:`(d,)` or :math:`(N, d)`, where :math:`d` is
-            the dimensionality of the kernel and :math:`N` is the number of points.
-
-        Returns
-        -------
-        float
-            The logarithm of the kernel evaluated at the given point or points.
-        """
-        return self.logHeight - 0.5 * self._squareMahalanobisDistances(points)
-
-    def evaluateOnGrid(
-        self, gridMarks: t.Sequence[np.ndarray]
-    ) -> t.Tuple[t.Tuple[int, ...], np.ndarray]:
-        """
-        Return the natural logarithms of the kernel evaluated on a rectilinear grid and
-        the indices of the grid point that is closest to the kernel's position.
-
-        Parameters
-        ----------
-        gridMarks
-            The points in each dimension used to define the rectilinear grid. The length
-            of this list must match the dimensionality :math:`d` of the kernel. The size
-            :math:`N_i` of each array :math:`i` is arbitrary. For periodic dimensions,
-            it is assumed that the grid spans the entire periodic length, i.e. that the
-            last point differs from the first by the periodic length.
-
-        Returns
-        -------
-        Tuple[int, ...]
-            The indices of the grid point that is closest to the kernel's position.
-        np.ndarray
-            The logarithm of the kernel evaluated on the grid points. The shape of this
-            array is :math:`(N_d, \\ldots, N_2, N_1)`, which makes it compatible with
-            OpenMM's ``TabulatedFunction`` convention.
-        """
-        distances = [points - x for points, x in zip(gridMarks, self.position)]
-        if self._periodic:
-            for dim, length in zip(self._pdims, self._lengths):
-                distances[dim] -= length * np.round(distances[dim] / length)
-                distances[dim][-1] = distances[dim][0]
-        exponents = [
-            -0.5 * (distance / sigma) ** 2
-            for distance, sigma in zip(distances, self.bandwidth)
-        ]
-        indices = tuple(map(np.argmax, reversed(exponents)))
-        return indices, self.logHeight + reduce(np.add.outer, reversed(exponents))
-
-
 class OPES(object):
     """Performs OPES."""
 
@@ -437,7 +225,7 @@ class OPES(object):
 
         self._log_acc_inv_density = -np.inf
 
-        self._means = np.array([0.5*(cv.minValue + cv.maxValue) for cv in variables])
+        self._means = np.array([0.5 * (cv.minValue + cv.maxValue) for cv in variables])
         self._variances = np.array([cv.biasWidth**2 for cv in variables])
         self._periodic = periodic
         self._lengths = np.array([cv.maxValue - cv.minValue for cv in variables])
@@ -515,6 +303,43 @@ class OPES(object):
         """Get the current values of all collective variables in a Simulation."""
         return self._force.getCollectiveVariableValues(simulation.context)
 
+    def _evaluateOnGrid(self, gridMarks, position, bandwidth, logWeight):
+        """
+        Return the natural logarithms of the kernel evaluated on a rectilinear grid and
+        the indices of the grid point that is closest to the kernel's position.
+
+        Parameters
+        ----------
+        gridMarks
+            The points in each dimension used to define the rectilinear grid. The length
+            of this list must match the dimensionality :math:`d` of the kernel. The size
+            :math:`N_i` of each array :math:`i` is arbitrary. For periodic dimensions,
+            it is assumed that the grid spans the entire periodic length, i.e. that the
+            last point differs from the first by the periodic length.
+
+        Returns
+        -------
+        Tuple[int, ...]
+            The indices of the grid point that is closest to the kernel's position.
+        np.ndarray
+            The logarithm of the kernel evaluated on the grid points. The shape of this
+            array is :math:`(N_d, \\ldots, N_2, N_1)`, which makes it compatible with
+            OpenMM's ``TabulatedFunction`` convention.
+        """
+        distances = [points - x for points, x in zip(gridMarks, position)]
+        if self._periodic:
+            for dim, length in enumerate(self._lengths):
+                distances[dim] -= length * np.round(distances[dim] / length)
+                distances[dim][-1] = distances[dim][0]
+        exponents = [
+            -0.5 * (distance / sigma) ** 2
+            for distance, sigma in zip(distances, bandwidth)
+        ]
+        indices = tuple(map(np.argmax, reversed(exponents)))
+        d = len(position)
+        logHeight = logWeight - 0.5 * d * LOG2PI - np.log(bandwidth).sum()
+        return indices, logHeight + reduce(np.add.outer, reversed(exponents))
+
     def _addGaussian(self, values, energy, context):
         """Add a Gaussian to the bias function."""
         # Compute a Gaussian along each axis.
@@ -530,10 +355,10 @@ class OPES(object):
         d = len(self.variables)
         silverman = (neff * (d + 2) / 4) ** (-1 / (d + 4))
 
-        # bandwidth = silverman * self._bwFactor * self._movingKernel.bandwidth
         bandwidth = silverman * self._bwFactor * np.sqrt(self._variances)
-        new_kernel = Kernel(self.variables, values, bandwidth, log_weight)
-        indices, log_gaussian = new_kernel.evaluateOnGrid(self._grid)
+        indices, log_gaussian = self._evaluateOnGrid(
+            self._grid, values, bandwidth, log_weight
+        )
 
         self._logPGrid = np.logaddexp(self._logPGrid, log_gaussian)
         self._log_acc_inv_density = np.logaddexp(
