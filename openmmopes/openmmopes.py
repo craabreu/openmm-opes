@@ -173,6 +173,7 @@ class OPES:
         ]
         shape = tuple(reversed(widths))
         self._kde = KernelDensityEstimate(shape)
+        self._kdeRw = KernelDensityEstimate(shape) if exploreMode else self._kde
 
         self._biasFactor = biasFactor
         prefactor = (
@@ -247,7 +248,7 @@ class OPES:
                     self._syncWithDisk()
             stepsToGo -= nextSteps
 
-    def getFreeEnergy(self):
+    def getFreeEnergy(self, reweighted=False):
         """Get the free energy of the system as a function of the collective variables.
 
         The result is returned as a N-dimensional NumPy array, where N is the number of
@@ -256,8 +257,9 @@ class OPES:
         corresponds to
         minValue + i*(maxValue-minValue)/gridWidth.
         """
-        freeEnergy = -self._kbt * self._kde.getLogPDF()
-        if self.exploreMode:
+        kde = self._kdeRw if reweighted else self._kde
+        freeEnergy = -self._kbt * kde.getLogPDF()
+        if self.exploreMode and not reweighted:
             freeEnergy *= self._biasFactor
         return freeEnergy
 
@@ -286,21 +288,17 @@ class OPES:
                 distances -= length * np.round(distances / length)
             axisSquaredDistances.append(distances**2)
 
-        if self.exploreMode:
-            logWeight = 0
-        else:
-            logWeight = energy / self._kbt
-
-        kde = self._kde
-
         bandwidth = self._sampleVariance
         if not self.exploreMode:
             bandwidth /= self._biasFactor
-        kde.update(logWeight, axisSquaredDistances, bandwidth)
+        self._kdeRw.update(energy / self._kbt, axisSquaredDistances, bandwidth)
+
+        if self.exploreMode:
+            self._kde.update(0, axisSquaredDistances, bandwidth)
 
         self._table.setFunctionParameters(
             *self._widths,
-            kde.getBias(self._prefactor, self._logEpsilon),
+            self._kde.getBias(self._prefactor, self._logEpsilon),
             *self._limits,
         )
         self._force.updateParametersInContext(context)
