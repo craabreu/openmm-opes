@@ -8,7 +8,6 @@
 
 import os
 import re
-import typing as t
 from dataclasses import dataclass
 from functools import reduce
 
@@ -24,12 +23,12 @@ DECAY_WINDOW: int = 10
 @dataclass
 class KernelDensityEstimate:
     """
-    Data structure to store the bias information.
+    A kernel density estimate on a grid.
 
     Parameters
     ----------
     shape
-        The shape of the bias grid.
+        The shape of the grid.
 
     Attributes
     ----------
@@ -48,55 +47,75 @@ class KernelDensityEstimate:
     logAccInvDensity: float
     logAccGaussian: np.ndarray
 
-    def __init__(self, shape: t.Tuple[int, ...]) -> None:
+    def __init__(self, shape):
         self.logSumW = -np.inf
         self.logSumW2 = -np.inf
         self.logAccInvDensity = -np.inf
         self.logAccGaussian = np.full(shape, -np.inf)
         self.d = len(shape)
 
-    def _addWeight(self, weight: float) -> None:
+    def _addWeight(self, weight):
         self.logSumW = np.logaddexp(self.logSumW, weight)
         self.logSumW2 = np.logaddexp(self.logSumW2, 2 * weight)
 
-    def _getBandwidthFactor(self) -> float:
+    def _getBandwidthFactor(self):
         neff = np.exp(2 * self.logSumW - self.logSumW2)
         return (neff * (self.d + 2) / 4) ** (-2 / (self.d + 4))
 
-    def _addKernel(
-        self, logWeight: float, logGaussian: np.ndarray, indices: t.Sequence[int]
-    ) -> None:
+    def _addKernel(self, logWeight, logGaussian, indices):
         self.logAccGaussian = np.logaddexp(self.logAccGaussian, logGaussian)
         self.logAccInvDensity = np.logaddexp(
             self.logAccInvDensity,
-            logWeight + self.logSumW - self.logAccGaussian[tuple(indices)],
+            logWeight + self.logSumW - self.logAccGaussian[indices],
         )
 
-    def getLogPDF(self) -> np.ndarray:
+    def getLogPDF(self):
+        """
+        Get the logarithm of the probability density function evaluated on the grid.
+        """
         return self.logAccGaussian - self.logSumW
 
-    def getBias(self, prefactor: float, logEpsilon: float) -> np.ndarray:
+    def getBias(self, prefactor, logEpsilon):
+        """
+        Get the bias potential evaluated on the grid.
+
+        Parameters
+        ----------
+        prefactor
+            The prefactor of the bias potential.
+        logEpsilon
+            The logarithm of the minimum value of the bias potential.
+        """
         return prefactor * np.logaddexp(
             self.logAccInvDensity - 2 * self.logSumW + self.logAccGaussian.ravel(),
             logEpsilon,
         )
 
-    def update(
-        self,
-        logWeight: float,
-        axisSquaredDistances: t.Sequence[np.ndarray],
-        variances: np.ndarray,
-    ):
+    def update(self, logWeight, axisSquaredDistances, variances, indices):
+        """
+        Update the kernel density estimate with a new Gaussian kernel.
+
+        Parameters
+        ----------
+        logWeight
+            The logarithm of the weight assigned to the kernel.
+        axisSquaredDistances
+            The squared distances from the kernel center to the grid points along each
+            axis.
+        variances
+            The variances of the variables along each axis.
+        indices
+            The indices of the grid point closest to the kernel center.
+        """
         self._addWeight(logWeight)
         bandwidth = self._getBandwidthFactor() * variances
         exponents = [
             -0.5 * sqDistances / sqSigma
             for sqDistances, sqSigma in zip(axisSquaredDistances, bandwidth)
         ]
-        indices = tuple(map(np.argmax, reversed(exponents)))
         logHeight = logWeight - 0.5 * (self.d * LOG2PI + np.log(bandwidth).sum())
         logGaussian = logHeight + reduce(np.add.outer, reversed(exponents))
-        self._addKernel(logWeight, logGaussian, indices)
+        self._addKernel(logWeight, logGaussian, tuple(reversed(indices)))
 
 
 class OPES:
@@ -118,13 +137,24 @@ class OPES:
             temperature = temperature * unit.kelvin
         if not unit.is_quantity(barrier):
             barrier = barrier * unit.kilojoules_per_mole
-        biasFactor = barrier / (unit.MOLAR_GAS_CONSTANT_R * temperature)
-        if biasFactor <= 1.0:
-            raise ValueError("biasFactor must be > 1")
         if (saveFrequency is None) != (biasDir is None):
             raise ValueError("Must specify both saveFrequency and biasDir")
         if saveFrequency and (saveFrequency % frequency != 0):
             raise ValueError("saveFrequency must be a multiple of frequency")
+
+        d = len(variables)
+        biasFactor = barrier / (unit.MOLAR_GAS_CONSTANT_R * temperature)
+        numPeriodics = sum(v.periodic for v in variables)
+        freeGroups = set(range(32)) - set(f.getForceGroup() for f in system.getForces())
+
+        if biasFactor <= 1.0:
+            raise ValueError("barrier must be greater than 1 kT")
+        if numPeriodics not in [0, d]:
+            raise ValueError("OPES cannot handle mixed periodic/non-periodic variables")
+        if not 1 <= d <= 3:
+            raise ValueError("OPES requires 1, 2, or 3 collective variables")
+        if not freeGroups:
+            raise RuntimeError("All 32 force groups are already in use.")
 
         self.variables = variables
         self.temperature = temperature
@@ -134,74 +164,55 @@ class OPES:
         self.saveFrequency = saveFrequency
         self.biasDir = biasDir
 
+        kbt = unit.MOLAR_GAS_CONSTANT_R * temperature
+        prefactor = (1 - 1 / biasFactor) * kbt
+        if exploreMode:
+            prefactor *= biasFactor
+        varNames = [f"cv{i}" for i in range(d)]
+
+        self._d = d
+        self._widths = np.array([v.gridWidth for v in variables])
+        self._lengths = np.array([v.maxValue - v.minValue for v in variables])
+        self._lbounds = np.array([v.minValue for v in variables])
+        self._limits = sum(([v.minValue, v.maxValue] for v in variables), [])
+        self._periodic = numPeriodics == d
+        self._biasFactor = biasFactor
+        self._kbt = kbt.in_units_of(unit.kilojoules_per_mole)
+        self._prefactor = prefactor.value_in_unit(unit.kilojoules_per_mole)
+        self._logEpsilon = -barrier / prefactor
+        self._tau = DECAY_WINDOW * frequency
+        self._sampleMean = None
+        self._sampleVariance = np.array([v.biasWidth**2 for v in variables])
         self._id = np.random.randint(0x7FFFFFFF)
         self._saveIndex = 0
-        self._selfBias = np.zeros(tuple(v.gridWidth for v in reversed(variables)))
+        # self._selfBias = np.zeros(tuple(v.gridWidth for v in reversed(variables)))
         # self._totalBias = np.zeros(tuple(v.gridWidth for v in reversed(variables)))
-        widths = [v.gridWidth for v in variables]
-        self._totalBias = np.full(np.prod(widths), -barrier / unit.kilojoules_per_mole)
-
         self._loadedBiases = {}
         self._syncWithDisk()
-        d = len(variables)
-        varNames = [f"cv{i}" for i in range(d)]
         self._force = mm.CustomCVForce(f"table({', '.join(varNames)})")
+        self._table = getattr(mm, f"Continuous{d}DFunction")(
+            *(self._widths if d > 1 else []),
+            np.full(np.prod(self._widths), -barrier / unit.kilojoules_per_mole),
+            *self._limits,
+            self._periodic,
+        )
+        self._grid = [
+            np.linspace(v.minValue, v.maxValue, v.gridWidth) for v in variables
+        ]
+        self._kde = KernelDensityEstimate(self._widths)
+        self._kdeRw = KernelDensityEstimate(self._widths) if exploreMode else self._kde
+
         for name, var in zip(varNames, variables):
             self._force.addCollectiveVariable(name, var.force)
-        self._widths = widths if len(variables) > 1 else []
-        self._limits = sum(([v.minValue, v.maxValue] for v in variables), [])
-        numPeriodics = sum(v.periodic for v in variables)
-        if numPeriodics not in [0, d]:
-            raise ValueError("OPES cannot handle mixed periodic/non-periodic variables")
-        periodic = numPeriodics == d
-        if not 1 <= d <= 3:
-            raise ValueError("OPES requires 1, 2, or 3 collective variables")
-        self._table = getattr(mm, f"Continuous{d}DFunction")(
-            *self._widths, self._totalBias.flatten(), *self._limits, periodic
-        )
         self._force.addTabulatedFunction("table", self._table)
-        freeGroups = set(range(32)) - set(f.getForceGroup() for f in system.getForces())
-        if not freeGroups:
-            raise RuntimeError("All 32 force groups are already in use.")
         self._force.setForceGroup(max(freeGroups))
         system.addForce(self._force)
 
-        kbt = unit.MOLAR_GAS_CONSTANT_R * temperature
-        self._kbt = kbt.in_units_of(unit.kilojoules_per_mole)
-        self._grid = [
-            np.linspace(cv.minValue, cv.maxValue, cv.gridWidth) for cv in variables
-        ]
-        shape = tuple(reversed(widths))
-        self._kde = KernelDensityEstimate(shape)
-        self._kdeRw = KernelDensityEstimate(shape) if exploreMode else self._kde
-
-        self._biasFactor = biasFactor
-        prefactor = (
-            (biasFactor - 1) * kbt if exploreMode else (1 - 1 / biasFactor) * kbt
-        )
-        self._prefactor = prefactor.value_in_unit(unit.kilojoules_per_mole)
-        self._logEpsilon = -barrier / prefactor
-
-        self._tau = DECAY_WINDOW * frequency
-
-        self._sampleMean = None
-        self._sampleVariance = np.array([cv.biasWidth**2 for cv in variables])
-        self._periodic = periodic
-        self._lengths = np.array([cv.maxValue - cv.minValue for cv in variables])
-        self._lbounds = np.array([cv.minValue for cv in variables])
-
     def _updateSampleStats(self, values):
-        """
-        Update the moving kernel used to estimate the bandwidth of the
-
-        Parameters
-        ----------
-        values
-            The current values of the collective variables.
-        """
+        """Update the sample mean and variance of the collective variables."""
         delta = values - self._sampleMean
         if self._periodic:
-            delta -= self._lengths * np.round(delta / self._lengths)
+            delta -= self._lengths * np.rint(delta / self._lengths)
         self._sampleMean += delta / self._tau
         if self._periodic:
             self._sampleMean = (
@@ -260,44 +271,41 @@ class OPES:
         kde = self._kdeRw if reweighted else self._kde
         freeEnergy = -self._kbt * kde.getLogPDF()
         if self.exploreMode and not reweighted:
-            freeEnergy *= self._biasFactor
+            return freeEnergy * self._biasFactor
         return freeEnergy
 
     def getCollectiveVariables(self, simulation):
         """Get the current values of all collective variables in a Simulation."""
         return self._force.getCollectiveVariableValues(simulation.context)
 
-    def _evaluateOnGrid(self, axisSquaredDistances, bandwidth, logWeight):
-        exponents = [
-            -0.5 * sqDistances / sqSigma
-            for sqDistances, sqSigma in zip(axisSquaredDistances, bandwidth)
-        ]
-        indices = tuple(map(np.argmax, reversed(exponents)))
-        d = len(self.variables)
-        logHeight = logWeight - 0.5 * (d * LOG2PI + np.log(bandwidth).sum())
-        return indices, logHeight + reduce(np.add.outer, reversed(exponents))
-
     def _addGaussian(self, values, energy, context):
         """Add a Gaussian to the bias function."""
-        # Compute a Gaussian along each axis.
+        values = np.array(values)
+        if self._periodic:
+            values = self._lbounds + (values - self._lbounds) % self._lengths
+        scaled_values = (self._widths - 1) * (values - self._lbounds) / self._lengths
+        indices = np.clip(np.rint(scaled_values).astype(int), 0, self._widths - 1)
 
         axisSquaredDistances = []
         for value, nodes, length in zip(values, self._grid, self._lengths):
             distances = nodes - value
             if self._periodic:
-                distances -= length * np.round(distances / length)
+                distances -= length * np.rint(distances / length)
+                distances[-1] = distances[0]
             axisSquaredDistances.append(distances**2)
 
-        bandwidth = self._sampleVariance
-        if not self.exploreMode:
-            bandwidth /= self._biasFactor
-        self._kdeRw.update(energy / self._kbt, axisSquaredDistances, bandwidth)
+        self._kdeRw.update(
+            energy / self._kbt,
+            axisSquaredDistances,
+            self._sampleVariance / self._biasFactor,
+            indices,
+        )
 
         if self.exploreMode:
-            self._kde.update(0, axisSquaredDistances, bandwidth)
+            self._kde.update(0, axisSquaredDistances, self._sampleVariance, indices)
 
         self._table.setFunctionParameters(
-            *self._widths,
+            *(self._widths if self._d > 1 else []),
             self._kde.getBias(self._prefactor, self._logEpsilon),
             *self._limits,
         )
