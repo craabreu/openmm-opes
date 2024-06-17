@@ -432,11 +432,16 @@ class OPES(object):
         self._logEpsilon = -barrier / prefactor
 
         self._tau = 10 * frequency
-        self._movingKernel = Kernel(variables, *[np.zeros(len(variables))] * 2, 0.0)
         self._counter = 0
         self._bwFactor = 1.0 if exploreMode else 1.0 / np.sqrt(biasFactor)
 
         self._log_acc_inv_density = -np.inf
+
+        self._means = np.array([0.5*(cv.minValue + cv.maxValue) for cv in variables])
+        self._variances = np.array([cv.biasWidth**2 for cv in variables])
+        self._periodic = periodic
+        self._lengths = np.array([cv.maxValue - cv.minValue for cv in variables])
+        self._lbounds = np.array([cv.minValue for cv in variables])
 
     def _updateMovingKernel(self, values: t.Tuple[float, ...]) -> None:
         """
@@ -447,14 +452,16 @@ class OPES(object):
         values
             The current values of the collective variables.
         """
-        kernel = self._movingKernel
-        delta = kernel.displacement(values)
+        delta = values - self._means
+        if self._periodic:
+            delta -= self._lengths * np.round(delta / self._lengths)
         x = 1 / self._tau
-        kernel.position = kernel.endpoint(x * delta)
-        delta *= kernel.displacement(values)
-        variance = self._counter * kernel.bandwidth**2 + delta
+        self._means += x * delta
+        if self._periodic:
+            self._means = self._lbounds + (self._means - self._lbounds) % self._lengths
+        self._variances = self._counter * self._variances + delta**2
         self._counter += 1
-        kernel.bandwidth = np.sqrt(variance / self._counter)
+        self._variances /= self._counter
 
     def step(self, simulation, steps):
         """Advance the simulation by integrating a specified number of time steps.
@@ -523,7 +530,8 @@ class OPES(object):
         d = len(self.variables)
         silverman = (neff * (d + 2) / 4) ** (-1 / (d + 4))
 
-        bandwidth = silverman * self._bwFactor * self._movingKernel.bandwidth
+        # bandwidth = silverman * self._bwFactor * self._movingKernel.bandwidth
+        bandwidth = silverman * self._bwFactor * np.sqrt(self._variances)
         new_kernel = Kernel(self.variables, values, bandwidth, log_weight)
         indices, log_gaussian = new_kernel.evaluateOnGrid(self._grid)
 
