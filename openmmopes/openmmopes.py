@@ -6,9 +6,9 @@
 .. moduleauthor:: Charlles Abreu <craabreu@gmail.com>
 """
 
+import functools
 import os
 import re
-import functools
 
 import numpy as np
 import openmm as mm
@@ -30,30 +30,28 @@ class KernelDensityEstimate:
 
     Attributes
     ----------
-    d
-        The number of dimensions.
+    shape
+        The shape of the grid.
     logSumW
         The logarithm of the sum of the weights.
     logSumW2
         The logarithm of the sum of the squared weights.
     logAccInvDensity
         The logarithm of the accumulated inverse probability density.
+    logSumWID
+        The logarithm of the sum of the weights added to the accumulated inverse
+        probability density.
     logAccGaussian
         The logarithm of the accumulated Gaussians on a grid.
     """
 
-    d: int
-    logSumW: float
-    logSumW2: float
-    logAccInvDensity: float
-    logAccGaussian: np.ndarray
-
     def __init__(self, shape):
-        self.d = len(shape)
+        self.shape = np.array(shape)
         self.logSumW = -np.inf
         self.logSumW2 = -np.inf
+        self.logSumWID = -np.inf
         self.logAccInvDensity = -np.inf
-        self.logAccGaussian = np.full(shape, -np.inf)
+        self.logAccGaussian = np.full(np.flip(shape), -np.inf)
 
     def _addWeight(self, weight):
         self.logSumW = np.logaddexp(self.logSumW, weight)
@@ -61,14 +59,16 @@ class KernelDensityEstimate:
 
     def _getBandwidthFactor(self):
         neff = np.exp(2 * self.logSumW - self.logSumW2)
-        return (neff * (self.d + 2) / 4) ** (-2 / (self.d + 4))
+        d = len(self.shape)
+        return (neff * (d + 2) / 4) ** (-2 / (d + 4))
 
     def _addKernel(self, logWeight, logGaussian, indices):
         self.logAccGaussian = np.logaddexp(self.logAccGaussian, logGaussian)
-        self.logAccInvDensity = np.logaddexp(
-            self.logAccInvDensity,
-            logWeight + self.logSumW - self.logAccGaussian[indices],
-        )
+        if np.any(indices < 0) or np.any(indices >= self.shape):
+            return
+        self.logSumWID = np.logaddexp(self.logSumWID, logWeight)
+        density = self.logAccGaussian[tuple(reversed(indices))] - self.logSumW
+        self.logAccInvDensity = np.logaddexp(self.logAccInvDensity, logWeight - density)
 
     def getLogPDF(self):
         """
@@ -87,9 +87,9 @@ class KernelDensityEstimate:
         logEpsilon
             The logarithm of the minimum value of the bias potential.
         """
+        logMeanInvDensity = self.logAccInvDensity - self.logSumWID
         return prefactor * np.logaddexp(
-            self.logAccInvDensity - 2 * self.logSumW + self.logAccGaussian.ravel(),
-            logEpsilon,
+            logMeanInvDensity - self.logSumW + self.logAccGaussian.ravel(), logEpsilon
         )
 
     def update(self, logWeight, axisSquaredDistances, variances, indices):
@@ -114,9 +114,10 @@ class KernelDensityEstimate:
             -0.5 * sqDistances / sqSigma
             for sqDistances, sqSigma in zip(axisSquaredDistances, bandwidth)
         ]
-        logHeight = logWeight - 0.5 * (self.d * LOG2PI + np.log(bandwidth).sum())
+        d = len(self.shape)
+        logHeight = logWeight - 0.5 * (d * LOG2PI + np.log(bandwidth).sum())
         logGaussian = logHeight + functools.reduce(np.add.outer, reversed(exponents))
-        self._addKernel(logWeight, logGaussian, tuple(reversed(indices)))
+        self._addKernel(logWeight, logGaussian, indices)
 
 
 class OPES:
@@ -281,15 +282,13 @@ class OPES:
 
     def _addGaussian(self, values, energy, context):
         """Add a Gaussian to the bias function."""
-        values = np.array(values)
+        scaled = (np.array(values) - self._lbounds) / self._lengths
         if self._periodic:
-            values = self._lbounds + (values - self._lbounds) % self._lengths
-        scaled_values = (self._widths - 1) * (values - self._lbounds) / self._lengths
-        indices = np.clip(np.rint(scaled_values).astype(int), 0, self._widths - 1)
+            scaled %= 1
+        indices = np.rint(scaled * (self._widths - 1)).astype(int)
 
         axisSquaredDistances = []
         for value, nodes, length in zip(values, self._grid, self._lengths):
-
             distances = nodes - value
             if self._periodic:
                 distances -= length * np.rint(distances / length)
