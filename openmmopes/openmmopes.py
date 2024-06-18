@@ -8,6 +8,7 @@
 
 import functools
 import os
+import pickle
 import re
 
 import numpy as np
@@ -36,7 +37,7 @@ class KernelDensityEstimate:
         The logarithm of the sum of the weights.
     logSumW2
         The logarithm of the sum of the squared weights.
-    logAccInvDensity
+    logAccID
         The logarithm of the accumulated inverse probability density.
     logSumWID
         The logarithm of the sum of the weights added to the accumulated inverse
@@ -50,8 +51,16 @@ class KernelDensityEstimate:
         self.logSumW = -np.inf
         self.logSumW2 = -np.inf
         self.logSumWID = -np.inf
-        self.logAccInvDensity = -np.inf
+        self.logAccID = -np.inf
         self.logAccGaussian = np.full(np.flip(shape), -np.inf)
+
+    def __iadd__(self, other):
+        self.logSumW = np.logaddexp(self.logSumW, other.logSumW)
+        self.logSumW2 = np.logaddexp(self.logSumW2, other.logSumW2)
+        self.logSumWID = np.logaddexp(self.logSumWID, other.logSumWID)
+        self.logAccID = np.logaddexp(self.logAccID, other.logAccID)
+        self.logAccGaussian = np.logaddexp(self.logAccGaussian, other.logAccGaussian)
+        return self
 
     def _addWeight(self, weight):
         self.logSumW = np.logaddexp(self.logSumW, weight)
@@ -68,7 +77,17 @@ class KernelDensityEstimate:
             return
         self.logSumWID = np.logaddexp(self.logSumWID, logWeight)
         density = self.logAccGaussian[tuple(reversed(indices))] - self.logSumW
-        self.logAccInvDensity = np.logaddexp(self.logAccInvDensity, logWeight - density)
+        self.logAccID = np.logaddexp(self.logAccID, logWeight - density)
+
+    def copy(self):
+        """Create a copy of the kernel density estimate."""
+        result = KernelDensityEstimate(self.shape)
+        result.logSumW = self.logSumW
+        result.logSumW2 = self.logSumW2
+        result.logSumWID = self.logSumWID
+        result.logAccID = self.logAccID
+        result.logAccGaussian = np.copy(self.logAccGaussian)
+        return result
 
     def getLogPDF(self):
         """
@@ -87,12 +106,12 @@ class KernelDensityEstimate:
         logEpsilon
             The logarithm of the minimum value of the bias potential.
         """
-        logMeanInvDensity = self.logAccInvDensity - self.logSumWID
+        logMeanInvDensity = self.logAccID - self.logSumWID
         return prefactor * np.logaddexp(
             logMeanInvDensity - self.logSumW + self.logAccGaussian.ravel(), logEpsilon
         )
 
-    def update(self, logWeight, axisSquaredDistances, variances, indices):
+    def update(self, logWeight, axisSqDistances, variances, indices):
         """
         Update the kernel density estimate with a new Gaussian kernel.
 
@@ -100,7 +119,7 @@ class KernelDensityEstimate:
         ----------
         logWeight
             The logarithm of the weight assigned to the kernel.
-        axisSquaredDistances
+        axisSqDistances
             The squared distances from the kernel center to the grid points along each
             axis.
         variances
@@ -112,7 +131,7 @@ class KernelDensityEstimate:
         bandwidth = self._getBandwidthFactor() * variances
         exponents = [
             -0.5 * sqDistances / sqSigma
-            for sqDistances, sqSigma in zip(axisSquaredDistances, bandwidth)
+            for sqDistances, sqSigma in zip(axisSqDistances, bandwidth)
         ]
         d = len(self.shape)
         logHeight = logWeight - 0.5 * (d * LOG2PI + np.log(bandwidth).sum())
@@ -139,26 +158,6 @@ class OPES:
             temperature = temperature * unit.kelvin
         if not unit.is_quantity(barrier):
             barrier = barrier * unit.kilojoules_per_mole
-        if (saveFrequency is None) != (biasDir is None):
-            raise ValueError("Must specify both saveFrequency and biasDir")
-        if saveFrequency and (saveFrequency % frequency != 0):
-            raise ValueError("saveFrequency must be a multiple of frequency")
-
-        d = len(variables)
-        kbt = unit.MOLAR_GAS_CONSTANT_R * temperature
-        biasFactor = barrier / kbt
-        numPeriodics = sum(v.periodic for v in variables)
-        freeGroups = set(range(32)) - set(f.getForceGroup() for f in system.getForces())
-
-        if biasFactor <= 1.0:
-            raise ValueError("OPES barrier must be greater than 1 kT")
-        if numPeriodics not in [0, d]:
-            raise ValueError("OPES cannot handle mixed periodic/non-periodic variables")
-        if not 1 <= d <= 3:
-            raise ValueError("OPES requires 1, 2, or 3 collective variables")
-        if not freeGroups:
-            raise RuntimeError("OPES requires a free force group, but all are in use.")
-
         self.variables = variables
         self.temperature = temperature
         self.frequency = frequency
@@ -166,6 +165,13 @@ class OPES:
         self.exploreMode = exploreMode
         self.saveFrequency = saveFrequency
         self.biasDir = biasDir
+
+        d = len(variables)
+        kbt = unit.MOLAR_GAS_CONSTANT_R * temperature
+        biasFactor = barrier / kbt
+        numPeriodics = sum(v.periodic for v in variables)
+        freeGroups = set(range(32)) - set(f.getForceGroup() for f in system.getForces())
+        self._validate(d, biasFactor, numPeriodics, freeGroups)
 
         prefactor = (1 - 1 / biasFactor) * kbt
         if exploreMode:
@@ -185,12 +191,22 @@ class OPES:
         self._tau = DECAY_WINDOW * frequency
         self._sampleMean = None
         self._sampleVariance = np.array([v.biasWidth**2 for v in variables])
+        self._grid = [
+            np.linspace(v.minValue, v.maxValue, v.gridWidth) for v in variables
+        ]
+
+        self._KDE = KernelDensityEstimate(self._widths)
+        self._rwKDE = KernelDensityEstimate(self._widths) if exploreMode else self._KDE
+        if saveFrequency:
+            self._selfKDE = KernelDensityEstimate(self._widths)
+            self._selfRwKDE = (
+                KernelDensityEstimate(self._widths) if exploreMode else self._selfKDE
+            )
         self._id = np.random.randint(0x7FFFFFFF)
         self._saveIndex = 0
-        # self._selfBias = np.zeros(tuple(v.gridWidth for v in reversed(variables)))
-        # self._totalBias = np.zeros(tuple(v.gridWidth for v in reversed(variables)))
         self._loadedBiases = {}
         self._syncWithDisk()
+
         self._force = mm.CustomCVForce(f"table({', '.join(varNames)})")
         self._table = getattr(mm, f"Continuous{d}DFunction")(
             *(self._widths if d > 1 else []),
@@ -198,17 +214,25 @@ class OPES:
             *self._limits,
             self._periodic,
         )
-        self._grid = [
-            np.linspace(v.minValue, v.maxValue, v.gridWidth) for v in variables
-        ]
-        self._KDE = KernelDensityEstimate(self._widths)
-        self._rwKDE = KernelDensityEstimate(self._widths) if exploreMode else self._KDE
-
         for name, var in zip(varNames, variables):
             self._force.addCollectiveVariable(name, var.force)
         self._force.addTabulatedFunction("table", self._table)
         self._force.setForceGroup(max(freeGroups))
         system.addForce(self._force)
+
+    def _validate(self, d, biasFactor, numPeriodics, freeGroups):
+        if (self.saveFrequency is None) != (self.biasDir is None):
+            raise ValueError("Must specify both saveFrequency and biasDir")
+        if self.saveFrequency and (self.saveFrequency % self.frequency != 0):
+            raise ValueError("saveFrequency must be a multiple of frequency")
+        if biasFactor <= 1.0:
+            raise ValueError("OPES barrier must be greater than 1 kT")
+        if numPeriodics not in [0, d]:
+            raise ValueError("OPES cannot handle mixed periodic/non-periodic variables")
+        if not 1 <= d <= 3:
+            raise ValueError("OPES requires 1, 2, or 3 collective variables")
+        if not freeGroups:
+            raise RuntimeError("OPES requires a free force group, but all are in use.")
 
     def _updateSampleStats(self, values):
         """Update the sample mean and variance of the collective variables."""
@@ -287,23 +311,24 @@ class OPES:
             scaled %= 1
         indices = np.rint(scaled * (self._widths - 1)).astype(int)
 
-        axisSquaredDistances = []
+        axisSqDistances = []
         for value, nodes, length in zip(values, self._grid, self._lengths):
             distances = nodes - value
             if self._periodic:
                 distances -= length * np.rint(distances / length)
                 distances[-1] = distances[0]
-            axisSquaredDistances.append(distances**2)
-
-        self._rwKDE.update(
-            energy / self._kbt,
-            axisSquaredDistances,
-            self._sampleVariance / self._biasFactor,
-            indices,
-        )
+            axisSqDistances.append(distances**2)
 
         if self.exploreMode:
-            self._KDE.update(0, axisSquaredDistances, self._sampleVariance, indices)
+            self._KDE.update(0, axisSqDistances, self._sampleVariance, indices)
+            if self.saveFrequency:
+                self._selfKDE.update(0, axisSqDistances, self._sampleVariance, indices)
+
+        logWeight = energy / self._kbt
+        variance = self._sampleVariance / self._biasFactor
+        self._rwKDE.update(logWeight, axisSqDistances, variance, indices)
+        if self.saveFrequency:
+            self._selfRwKDE.update(logWeight, axisSqDistances, variance, indices)
 
         self._table.setFunctionParameters(
             *(self._widths if self._d > 1 else []),
@@ -321,11 +346,15 @@ class OPES:
 
         # Use a safe save to write out the biases to disk, then delete the older file.
 
-        oldName = os.path.join(self.biasDir, f"bias_{self._id}_{self._saveIndex}.npy")
+        oldName = os.path.join(self.biasDir, f"bias_{self._id}_{self._saveIndex}.pkl")
         self._saveIndex += 1
-        tempName = os.path.join(self.biasDir, f"temp_{self._id}_{self._saveIndex}.npy")
-        fileName = os.path.join(self.biasDir, f"bias_{self._id}_{self._saveIndex}.npy")
-        np.save(tempName, self._selfBias)
+        tempName = os.path.join(self.biasDir, f"temp_{self._id}_{self._saveIndex}.pkl")
+        fileName = os.path.join(self.biasDir, f"bias_{self._id}_{self._saveIndex}.pkl")
+        data = [self._selfKDE]
+        if self.exploreMode:
+            data.append(self._selfRwKDE)
+        with open(tempName, "wb") as file:
+            pickle.dump(data, file)
         os.rename(tempName, fileName)
         if os.path.exists(oldName):
             os.remove(oldName)
@@ -333,7 +362,7 @@ class OPES:
         # Check for any files updated by other processes.
 
         fileLoaded = False
-        pattern = re.compile(r"bias_(.*)_(.*)\.npy")
+        pattern = re.compile(r"bias_(.*)_(.*)\.pkl")
         for filename in os.listdir(self.biasDir):
             match = pattern.match(filename)
             if match is not None:
@@ -344,7 +373,9 @@ class OPES:
                     or matchIndex > self._loadedBiases[matchId].index
                 ):
                     try:
-                        data = np.load(os.path.join(self.biasDir, filename))
+                        # data = np.load(os.path.join(self.biasDir, filename))
+                        with open(os.path.join(self.biasDir, filename), "rb") as file:
+                            data = pickle.load(file)
                         self._loadedBiases[matchId] = _LoadedBias(
                             matchId, matchIndex, data
                         )
@@ -359,6 +390,9 @@ class OPES:
         # If we loaded any files, recompute the total bias from all processes.
 
         if fileLoaded:
-            self._totalBias = np.copy(self._selfBias)
+            self._KDE = self._selfKDE.copy()
+            self._rwKDE = self._selfRwKDE.copy() if self.exploreMode else self._KDE
             for bias in self._loadedBiases.values():
-                self._totalBias += bias.bias
+                self._KDE += bias.bias[0]
+                if self.exploreMode:
+                    self._rwKDE += bias.bias[1]
