@@ -8,8 +8,7 @@
 
 import os
 import re
-from dataclasses import dataclass
-from functools import reduce
+import functools
 
 import numpy as np
 import openmm as mm
@@ -20,7 +19,6 @@ LOG2PI = np.log(2 * np.pi)
 DECAY_WINDOW: int = 10
 
 
-@dataclass
 class KernelDensityEstimate:
     """
     A kernel density estimate on a grid.
@@ -32,6 +30,8 @@ class KernelDensityEstimate:
 
     Attributes
     ----------
+    d
+        The number of dimensions.
     logSumW
         The logarithm of the sum of the weights.
     logSumW2
@@ -42,17 +42,18 @@ class KernelDensityEstimate:
         The logarithm of the accumulated Gaussians on a grid.
     """
 
+    d: int
     logSumW: float
     logSumW2: float
     logAccInvDensity: float
     logAccGaussian: np.ndarray
 
     def __init__(self, shape):
+        self.d = len(shape)
         self.logSumW = -np.inf
         self.logSumW2 = -np.inf
         self.logAccInvDensity = -np.inf
         self.logAccGaussian = np.full(shape, -np.inf)
-        self.d = len(shape)
 
     def _addWeight(self, weight):
         self.logSumW = np.logaddexp(self.logSumW, weight)
@@ -114,7 +115,7 @@ class KernelDensityEstimate:
             for sqDistances, sqSigma in zip(axisSquaredDistances, bandwidth)
         ]
         logHeight = logWeight - 0.5 * (self.d * LOG2PI + np.log(bandwidth).sum())
-        logGaussian = logHeight + reduce(np.add.outer, reversed(exponents))
+        logGaussian = logHeight + functools.reduce(np.add.outer, reversed(exponents))
         self._addKernel(logWeight, logGaussian, tuple(reversed(indices)))
 
 
@@ -143,18 +144,19 @@ class OPES:
             raise ValueError("saveFrequency must be a multiple of frequency")
 
         d = len(variables)
-        biasFactor = barrier / (unit.MOLAR_GAS_CONSTANT_R * temperature)
+        kbt = unit.MOLAR_GAS_CONSTANT_R * temperature
+        biasFactor = barrier / kbt
         numPeriodics = sum(v.periodic for v in variables)
         freeGroups = set(range(32)) - set(f.getForceGroup() for f in system.getForces())
 
         if biasFactor <= 1.0:
-            raise ValueError("barrier must be greater than 1 kT")
+            raise ValueError("OPES barrier must be greater than 1 kT")
         if numPeriodics not in [0, d]:
             raise ValueError("OPES cannot handle mixed periodic/non-periodic variables")
         if not 1 <= d <= 3:
             raise ValueError("OPES requires 1, 2, or 3 collective variables")
         if not freeGroups:
-            raise RuntimeError("All 32 force groups are already in use.")
+            raise RuntimeError("OPES requires a free force group, but all are in use.")
 
         self.variables = variables
         self.temperature = temperature
@@ -164,22 +166,21 @@ class OPES:
         self.saveFrequency = saveFrequency
         self.biasDir = biasDir
 
-        kbt = unit.MOLAR_GAS_CONSTANT_R * temperature
         prefactor = (1 - 1 / biasFactor) * kbt
         if exploreMode:
             prefactor *= biasFactor
         varNames = [f"cv{i}" for i in range(d)]
 
         self._d = d
-        self._widths = np.array([v.gridWidth for v in variables])
         self._lengths = np.array([v.maxValue - v.minValue for v in variables])
         self._lbounds = np.array([v.minValue for v in variables])
+        self._widths = np.array([v.gridWidth for v in variables])
         self._limits = sum(([v.minValue, v.maxValue] for v in variables), [])
+        self._prefactor = prefactor.value_in_unit(unit.kilojoules_per_mole)
+        self._logEpsilon = -barrier / prefactor
         self._periodic = numPeriodics == d
         self._biasFactor = biasFactor
         self._kbt = kbt.in_units_of(unit.kilojoules_per_mole)
-        self._prefactor = prefactor.value_in_unit(unit.kilojoules_per_mole)
-        self._logEpsilon = -barrier / prefactor
         self._tau = DECAY_WINDOW * frequency
         self._sampleMean = None
         self._sampleVariance = np.array([v.biasWidth**2 for v in variables])
@@ -199,8 +200,8 @@ class OPES:
         self._grid = [
             np.linspace(v.minValue, v.maxValue, v.gridWidth) for v in variables
         ]
-        self._kde = KernelDensityEstimate(self._widths)
-        self._kdeRw = KernelDensityEstimate(self._widths) if exploreMode else self._kde
+        self._KDE = KernelDensityEstimate(self._widths)
+        self._rwKDE = KernelDensityEstimate(self._widths) if exploreMode else self._KDE
 
         for name, var in zip(varNames, variables):
             self._force.addCollectiveVariable(name, var.force)
@@ -268,7 +269,7 @@ class OPES:
         corresponds to
         minValue + i*(maxValue-minValue)/gridWidth.
         """
-        kde = self._kdeRw if reweighted else self._kde
+        kde = self._rwKDE if reweighted else self._KDE
         freeEnergy = -self._kbt * kde.getLogPDF()
         if self.exploreMode and not reweighted:
             return freeEnergy * self._biasFactor
@@ -288,13 +289,14 @@ class OPES:
 
         axisSquaredDistances = []
         for value, nodes, length in zip(values, self._grid, self._lengths):
+
             distances = nodes - value
             if self._periodic:
                 distances -= length * np.rint(distances / length)
                 distances[-1] = distances[0]
             axisSquaredDistances.append(distances**2)
 
-        self._kdeRw.update(
+        self._rwKDE.update(
             energy / self._kbt,
             axisSquaredDistances,
             self._sampleVariance / self._biasFactor,
@@ -302,11 +304,11 @@ class OPES:
         )
 
         if self.exploreMode:
-            self._kde.update(0, axisSquaredDistances, self._sampleVariance, indices)
+            self._KDE.update(0, axisSquaredDistances, self._sampleVariance, indices)
 
         self._table.setFunctionParameters(
             *(self._widths if self._d > 1 else []),
-            self._kde.getBias(self._prefactor, self._logEpsilon),
+            self._KDE.getBias(self._prefactor, self._logEpsilon),
             *self._limits,
         )
         self._force.updateParametersInContext(context)
