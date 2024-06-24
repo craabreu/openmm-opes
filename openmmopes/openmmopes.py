@@ -33,6 +33,8 @@ class KernelDensityEstimate:
     ----------
     shape
         The shape of the grid.
+    counter
+        The number of times the kernel density estimate has been updated.
     logSumW
         The logarithm of the sum of the weights.
     logSumW2
@@ -48,6 +50,7 @@ class KernelDensityEstimate:
 
     def __init__(self, shape):
         self.shape = np.array(shape)
+        self.counter = 0
         self.logSumW = -np.inf
         self.logSumW2 = -np.inf
         self.logSumWID = -np.inf
@@ -82,6 +85,7 @@ class KernelDensityEstimate:
     def copy(self):
         """Create a copy of the kernel density estimate."""
         result = KernelDensityEstimate(self.shape)
+        result.counter = self.counter
         result.logSumW = self.logSumW
         result.logSumW2 = self.logSumW2
         result.logSumWID = self.logSumWID
@@ -108,7 +112,7 @@ class KernelDensityEstimate:
         """
         logMeanInvDensity = self.logAccID - self.logSumWID
         return prefactor * np.logaddexp(
-            logMeanInvDensity - self.logSumW + self.logAccGaussian.ravel(), logEpsilon
+            logMeanInvDensity - self.logSumW + self.logAccGaussian, logEpsilon
         )
 
     def update(self, logWeight, axisSqDistances, variances, indices):
@@ -127,6 +131,7 @@ class KernelDensityEstimate:
         indices
             The indices of the grid point closest to the kernel center.
         """
+        self.counter += 1
         self._addWeight(logWeight)
         bandwidth = self._getBandwidthFactor() * variances
         exponents = [
@@ -285,20 +290,22 @@ class OPES:
                     self._syncWithDisk()
             stepsToGo -= nextSteps
 
-    def getFreeEnergy(self, reweighted=False):
-        """Get the free energy of the system as a function of the collective variables.
+    def getFreeEnergy(self, reweighted=False, original=False):
+        """
+        Get the free energy of the system as a function of the collective variables.
 
         The result is returned as a N-dimensional NumPy array, where N is the number of
-        collective
-        variables.  The values are in kJ/mole.  The i'th position along an axis
-        corresponds to
-        minValue + i*(maxValue-minValue)/gridWidth.
+        collective variables.  The values are in kJ/mole.  The i'th position along an
+        axis corresponds to minValue + i*(maxValue-minValue)/gridWidth.
         """
-        kde = self._rwKDE if reweighted else self._KDE
-        freeEnergy = -self._kbt * kde.getLogPDF()
-        if self.exploreMode and not reweighted:
-            return freeEnergy * self._biasFactor
-        return freeEnergy
+        if not self.exploreMode or reweighted:
+            return -self._kbt * self._rwKDE.getLogPDF()
+        biasedFreeEnergy = -self._kbt * self._KDE.getLogPDF()
+        if original:
+            return biasedFreeEnergy * self._biasFactor
+        biasPotential = self._KDE.getBias(self._prefactor, self._logEpsilon)
+        variation = self._kbt * (self._rwKDE.logSumW - np.log(self._rwKDE.counter))
+        return biasedFreeEnergy - biasPotential * unit.kilojoules_per_mole + variation
 
     def getCollectiveVariables(self, simulation):
         """Get the current values of all collective variables in a Simulation."""
@@ -332,7 +339,7 @@ class OPES:
 
         self._table.setFunctionParameters(
             *(self._widths if self._d > 1 else []),
-            self._KDE.getBias(self._prefactor, self._logEpsilon),
+            self._KDE.getBias(self._prefactor, self._logEpsilon).ravel(),
             *self._limits,
         )
         self._force.updateParametersInContext(context)
