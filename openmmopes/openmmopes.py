@@ -18,6 +18,7 @@ from openmm.app.metadynamics import _LoadedBias
 
 LOG2PI = np.log(2 * np.pi)
 DECAY_WINDOW: int = 10
+DIFFUSIVE_VARIANCE: bool = False
 
 
 class KernelDensityEstimate:
@@ -196,6 +197,7 @@ class OPES:
         self._adaptiveVariance = varianceFrequency is not None
         self._interval = varianceFrequency or frequency
         self._tau = DECAY_WINDOW * frequency / varianceFrequency
+        self._sampleCounter = 0
         self._sampleMean = None
         self._sampleVariance = np.array([v.biasWidth**2 for v in variables])
         self._grid = [
@@ -253,7 +255,12 @@ class OPES:
             self._sampleMean = (
                 self._lbounds + (self._sampleMean - self._lbounds) % self._lengths
             )
-        self._sampleVariance += (delta**2 - self._sampleVariance) / self._tau
+        if DIFFUSIVE_VARIANCE:
+            self._sampleVariance += (delta**2 - self._sampleVariance) / self._tau
+        else:
+            self._sampleVariance = self._sampleCounter * self._sampleVariance + delta**2
+            self._sampleCounter += 1
+            self._sampleVariance /= self._sampleCounter
 
     def step(self, simulation, steps):
         """Advance the simulation by integrating a specified number of time steps.
