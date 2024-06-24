@@ -155,7 +155,7 @@ class OPES:
         barrier,
         frequency,
         exploreMode=False,
-        adaptiveVariance=True,
+        varianceFrequency=None,
         saveFrequency=None,
         biasDir=None,
     ):
@@ -166,8 +166,8 @@ class OPES:
         self.variables = variables
         self.temperature = temperature
         self.frequency = frequency
-        self.adaptiveVariance = adaptiveVariance
         self.exploreMode = exploreMode
+        self.varianceFrequency = varianceFrequency
         self.saveFrequency = saveFrequency
         self.biasDir = biasDir
 
@@ -193,7 +193,9 @@ class OPES:
         self._periodic = numPeriodics == d
         self._biasFactor = biasFactor
         self._kbt = kbt.in_units_of(unit.kilojoules_per_mole)
-        self._tau = DECAY_WINDOW * frequency
+        self._adaptiveVariance = varianceFrequency is not None
+        self._interval = varianceFrequency or frequency
+        self._tau = DECAY_WINDOW * frequency / varianceFrequency
         self._sampleMean = None
         self._sampleVariance = np.array([v.biasWidth**2 for v in variables])
         self._grid = [
@@ -226,6 +228,8 @@ class OPES:
         system.addForce(self._force)
 
     def _validate(self, d, biasFactor, numPeriodics, freeGroups):
+        if self.varianceFrequency and (self.frequency % self.varianceFrequency != 0):
+            raise ValueError("varianceFrequency must be a divisor of frequency")
         if (self.saveFrequency is None) != (self.biasDir is None):
             raise ValueError("Must specify both saveFrequency and biasDir")
         if self.saveFrequency and (self.saveFrequency % self.frequency != 0):
@@ -262,32 +266,27 @@ class OPES:
             the number of time steps to integrate
         """
         stepsToGo = steps
-        forceGroup = self._force.getForceGroup()
+        groups = {self._force.getForceGroup()}
         if self._sampleMean is None:
             self._sampleMean = np.array(self.getCollectiveVariables(simulation))
         while stepsToGo > 0:
             nextSteps = stepsToGo
             nextSteps = min(
-                nextSteps, self.frequency - simulation.currentStep % self.frequency
+                nextSteps, self._interval - simulation.currentStep % self._interval
             )
-            if self.adaptiveVariance:
-                for _ in range(nextSteps):
-                    simulation.step(1)
-                    position = self.getCollectiveVariables(simulation)
-                    self._updateSampleStats(position)
-            else:
-                simulation.step(nextSteps)
-            if simulation.currentStep % self.frequency == 0:
+            simulation.step(nextSteps)
+            if simulation.currentStep % self._interval == 0:
                 position = self.getCollectiveVariables(simulation)
-                energy = simulation.context.getState(
-                    getEnergy=True, groups={forceGroup}
-                ).getPotentialEnergy()
-                self._addGaussian(position, energy, simulation.context)
-                if (
-                    self.saveFrequency is not None
-                    and simulation.currentStep % self.saveFrequency == 0
-                ):
-                    self._syncWithDisk()
+                self._updateSampleStats(position)
+                if simulation.currentStep % self.frequency == 0:
+                    state = simulation.context.getState(getEnergy=True, groups=groups)
+                    energy = state.getPotentialEnergy()
+                    self._addGaussian(position, energy, simulation.context)
+                    if (
+                        self.saveFrequency is not None
+                        and simulation.currentStep % self.saveFrequency == 0
+                    ):
+                        self._syncWithDisk()
             stepsToGo -= nextSteps
 
     def getFreeEnergy(self, reweighted=False, original=False):
