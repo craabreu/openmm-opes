@@ -18,7 +18,7 @@ from openmm.app.metadynamics import _LoadedBias
 
 LOG2PI = np.log(2 * np.pi)
 DECAY_WINDOW: int = 10
-DIFFUSIVE_VARIANCE: bool = False
+GLOBAL_VARIANCE: bool = True
 
 
 class KernelDensityEstimate:
@@ -247,20 +247,19 @@ class OPES:
 
     def _updateSampleStats(self, values):
         """Update the sample mean and variance of the collective variables."""
+        self._sampleCounter += 1
         delta = values - self._sampleMean
         if self._periodic:
             delta -= self._lengths * np.rint(delta / self._lengths)
-        self._sampleMean += delta / self._tau
+        x = 1 / self._tau
+        self._sampleMean += x * delta
         if self._periodic:
             self._sampleMean = (
                 self._lbounds + (self._sampleMean - self._lbounds) % self._lengths
             )
-        if DIFFUSIVE_VARIANCE:
-            self._sampleVariance += (delta**2 - self._sampleVariance) / self._tau
-        else:
-            self._sampleVariance = self._sampleCounter * self._sampleVariance + delta**2
-            self._sampleCounter += 1
-            self._sampleVariance /= self._sampleCounter
+        if GLOBAL_VARIANCE:
+            x = 1 / self._sampleCounter
+        self._sampleVariance += x * (delta**2 - self._sampleVariance)
 
     def step(self, simulation, steps):
         """Advance the simulation by integrating a specified number of time steps.
