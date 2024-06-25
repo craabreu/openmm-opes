@@ -116,6 +116,12 @@ class KernelDensityEstimate:
             logMeanInvDensity - self.logSumW + self.logAccGaussian, logEpsilon
         )
 
+    def getLogMeanInvDensity(self):
+        """
+        Get the logarithm of the mean inverse probability density.
+        """
+        return self.logAccID - self.logSumWID
+
     def update(self, logWeight, axisSqDistances, variances, indices):
         """
         Update the kernel density estimate with a new Gaussian kernel.
@@ -199,7 +205,8 @@ class OPES:
         self._tau = DECAY_WINDOW * frequency / varianceFrequency
         self._sampleCounter = 0
         self._sampleMean = None
-        self._sampleVariance = np.array([v.biasWidth**2 for v in variables])
+        # self._sampleVariance = np.array([v.biasWidth**2 for v in variables])
+        self._sampleVariance = np.zeros(d)
         self._grid = [
             np.linspace(v.minValue, v.maxValue, v.gridWidth) for v in variables
         ]
@@ -315,6 +322,23 @@ class OPES:
     def getCollectiveVariables(self, simulation):
         """Get the current values of all collective variables in a Simulation."""
         return self._force.getCollectiveVariableValues(simulation.context)
+
+    def setVariance(self, variance) -> None:
+        """
+        Set the variance of the probability distribution estimate.
+
+        Parameters
+        ----------
+        variance
+            The variance of the probability distribution estimate.
+        """
+        self._sampleVariance = np.array(variance)
+
+    def getVariance(self) -> np.ndarray:
+        """
+        Get the variance of the probability distribution estimate.
+        """
+        return self._sampleVariance
 
     def _addGaussian(self, values, energy, context):
         """Add a Gaussian to the bias function."""
