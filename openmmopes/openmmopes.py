@@ -32,6 +32,8 @@ class KernelDensityEstimate:
 
     Attributes
     ----------
+    d
+        The number of dimensions.
     shape
         The shape of the grid.
     counter
@@ -50,12 +52,10 @@ class KernelDensityEstimate:
     """
 
     def __init__(self, shape):
+        self.d = len(shape)
         self.shape = np.array(shape)
         self.counter = 0
-        self.logSumW = -np.inf
-        self.logSumW2 = -np.inf
-        self.logSumWID = -np.inf
-        self.logAccID = -np.inf
+        self.logSumW = self.logSumW2 = self.logSumWID = self.logAccID = -np.inf
         self.logAccGaussian = np.full(np.flip(shape), -np.inf)
 
     def __iadd__(self, other):
@@ -65,23 +65,6 @@ class KernelDensityEstimate:
         self.logAccID = np.logaddexp(self.logAccID, other.logAccID)
         self.logAccGaussian = np.logaddexp(self.logAccGaussian, other.logAccGaussian)
         return self
-
-    def _addWeight(self, weight):
-        self.logSumW = np.logaddexp(self.logSumW, weight)
-        self.logSumW2 = np.logaddexp(self.logSumW2, 2 * weight)
-
-    def _getBandwidthFactor(self):
-        neff = np.exp(2 * self.logSumW - self.logSumW2)
-        d = len(self.shape)
-        return (neff * (d + 2) / 4) ** (-2 / (d + 4))
-
-    def _addKernel(self, logWeight, logGaussian, indices):
-        self.logAccGaussian = np.logaddexp(self.logAccGaussian, logGaussian)
-        if np.any(indices < 0) or np.any(indices >= self.shape):
-            return
-        self.logSumWID = np.logaddexp(self.logSumWID, logWeight)
-        density = self.logAccGaussian[tuple(reversed(indices))] - self.logSumW
-        self.logAccID = np.logaddexp(self.logAccID, logWeight - density)
 
     def copy(self):
         """Create a copy of the kernel density estimate."""
@@ -122,7 +105,7 @@ class KernelDensityEstimate:
         """
         return self.logAccID - self.logSumWID
 
-    def update(self, logWeight, axisSqDistances, variances, indices):
+    def update(self, logWeight, axisSquaredDistances, variances, indices):
         """
         Update the kernel density estimate with a new Gaussian kernel.
 
@@ -130,7 +113,7 @@ class KernelDensityEstimate:
         ----------
         logWeight
             The logarithm of the weight assigned to the kernel.
-        axisSqDistances
+        axisSquaredDistances
             The squared distances from the kernel center to the grid points along each
             axis.
         variances
@@ -139,16 +122,21 @@ class KernelDensityEstimate:
             The indices of the grid point closest to the kernel center.
         """
         self.counter += 1
-        self._addWeight(logWeight)
-        bandwidth = self._getBandwidthFactor() * variances
+        self.logSumW = np.logaddexp(self.logSumW, logWeight)
+        self.logSumW2 = np.logaddexp(self.logSumW2, 2 * logWeight)
+        neff = np.exp(2 * self.logSumW - self.logSumW2)
+        bandwidth = (neff * (self.d + 2) / 4) ** (-2 / (self.d + 4)) * variances
         exponents = [
-            -0.5 * sqDistances / sqSigma
-            for sqDistances, sqSigma in zip(axisSqDistances, bandwidth)
+            -0.5 * x2 / sigma2 for x2, sigma2 in zip(axisSquaredDistances, bandwidth)
         ]
-        d = len(self.shape)
-        logHeight = logWeight - 0.5 * (d * LOG2PI + np.log(bandwidth).sum())
+        logHeight = logWeight - 0.5 * (self.d * LOG2PI + np.log(bandwidth).sum())
         logGaussian = logHeight + functools.reduce(np.add.outer, reversed(exponents))
-        self._addKernel(logWeight, logGaussian, indices)
+        self.logAccGaussian = np.logaddexp(self.logAccGaussian, logGaussian)
+        if np.any(indices < 0) or np.any(indices >= self.shape):
+            return
+        self.logSumWID = np.logaddexp(self.logSumWID, logWeight)
+        density = self.logAccGaussian[tuple(reversed(indices))] - self.logSumW
+        self.logAccID = np.logaddexp(self.logAccID, logWeight - density)
 
 
 class OPES:
@@ -172,6 +160,7 @@ class OPES:
             barrier = barrier * unit.kilojoules_per_mole
         self.variables = variables
         self.temperature = temperature
+        self.barrier = barrier
         self.frequency = frequency
         self.exploreMode = exploreMode
         self.varianceFrequency = varianceFrequency
@@ -202,22 +191,22 @@ class OPES:
         self._kbt = kbt.in_units_of(unit.kilojoules_per_mole)
         self._adaptiveVariance = varianceFrequency is not None
         self._interval = varianceFrequency or frequency
-        self._tau = DECAY_WINDOW * frequency / varianceFrequency
-        self._sampleCounter = 0
+        self._tau = DECAY_WINDOW * (frequency // varianceFrequency)
         self._sampleMean = None
-        # self._sampleVariance = np.array([v.biasWidth**2 for v in variables])
-        self._sampleVariance = np.zeros(d)
+        self._sampleVariance = np.array([v.biasWidth**2 for v in variables])
+        self._sampleCounter = 0
         self._grid = [
             np.linspace(v.minValue, v.maxValue, v.gridWidth) for v in variables
         ]
 
-        self._KDE = KernelDensityEstimate(self._widths)
-        self._rwKDE = KernelDensityEstimate(self._widths) if exploreMode else self._KDE
+        self._KDE = self._rwKDE = KernelDensityEstimate(self._widths)
+        if exploreMode:
+            self._rwKDE = KernelDensityEstimate(self._widths)
         if saveFrequency:
-            self._selfKDE = KernelDensityEstimate(self._widths)
-            self._selfRwKDE = (
-                KernelDensityEstimate(self._widths) if exploreMode else self._selfKDE
-            )
+            self._selfKDE = self._selfRwKDE = KernelDensityEstimate(self._widths)
+            if exploreMode:
+                self._selfRwKDE = KernelDensityEstimate(self._widths)
+
         self._id = np.random.randint(0x7FFFFFFF)
         self._saveIndex = 0
         self._loadedBiases = {}
@@ -258,15 +247,16 @@ class OPES:
         delta = values - self._sampleMean
         if self._periodic:
             delta -= self._lengths * np.rint(delta / self._lengths)
-        x = 1 / self._tau
+        x = 1 / min(self._tau, 1 + self._sampleCounter)
         self._sampleMean += x * delta
         if self._periodic:
             self._sampleMean = (
                 self._lbounds + (self._sampleMean - self._lbounds) % self._lengths
             )
+        variance = (1 - x) * delta**2
         if GLOBAL_VARIANCE:
-            x = 1 / self._sampleCounter
-        self._sampleVariance += x * (delta**2 - self._sampleVariance)
+            x = 1 / (self._tau + self._sampleCounter)
+        self._sampleVariance += x * (variance - self._sampleVariance)
 
     def step(self, simulation, steps):
         """Advance the simulation by integrating a specified number of time steps.
@@ -280,7 +270,7 @@ class OPES:
         """
         stepsToGo = steps
         groups = {self._force.getForceGroup()}
-        if self._sampleMean is None:
+        if self._adaptiveVariance and self._sampleMean is None:
             self._sampleMean = np.array(self.getCollectiveVariables(simulation))
         while stepsToGo > 0:
             nextSteps = stepsToGo
@@ -290,7 +280,8 @@ class OPES:
             simulation.step(nextSteps)
             if simulation.currentStep % self._interval == 0:
                 position = self.getCollectiveVariables(simulation)
-                self._updateSampleStats(position)
+                if self._adaptiveVariance:
+                    self._updateSampleStats(position)
                 if simulation.currentStep % self.frequency == 0:
                     state = simulation.context.getState(getEnergy=True, groups=groups)
                     energy = state.getPotentialEnergy()
