@@ -42,7 +42,7 @@ class KernelDensityEstimate:
         The logarithm of the sum of the weights.
     logSumW2
         The logarithm of the sum of the squared weights.
-    logAccID
+    logAccInvDens
         The logarithm of the accumulated inverse probability density.
     logSumWID
         The logarithm of the sum of the weights added to the accumulated inverse
@@ -55,14 +55,14 @@ class KernelDensityEstimate:
         self.d = len(shape)
         self.shape = np.array(shape)
         self.counter = 0
-        self.logSumW = self.logSumW2 = self.logSumWID = self.logAccID = -np.inf
+        self.logSumW = self.logSumW2 = self.logSumWID = self.logAccInvDens = -np.inf
         self.logAccGaussian = np.full(np.flip(shape), -np.inf)
 
     def __iadd__(self, other):
         self.logSumW = np.logaddexp(self.logSumW, other.logSumW)
         self.logSumW2 = np.logaddexp(self.logSumW2, other.logSumW2)
         self.logSumWID = np.logaddexp(self.logSumWID, other.logSumWID)
-        self.logAccID = np.logaddexp(self.logAccID, other.logAccID)
+        self.logAccInvDens = np.logaddexp(self.logAccInvDens, other.logAccInvDens)
         self.logAccGaussian = np.logaddexp(self.logAccGaussian, other.logAccGaussian)
         return self
 
@@ -73,7 +73,7 @@ class KernelDensityEstimate:
         result.logSumW = self.logSumW
         result.logSumW2 = self.logSumW2
         result.logSumWID = self.logSumWID
-        result.logAccID = self.logAccID
+        result.logAccInvDens = self.logAccInvDens
         result.logAccGaussian = np.copy(self.logAccGaussian)
         return result
 
@@ -82,6 +82,12 @@ class KernelDensityEstimate:
         Get the logarithm of the probability density function evaluated on the grid.
         """
         return self.logAccGaussian - self.logSumW
+
+    def getLogMeanInvDensity(self):
+        """
+        Get the logarithm of the mean inverse probability density.
+        """
+        return self.logAccInvDens - self.logSumWID
 
     def getBias(self, prefactor, logEpsilon):
         """
@@ -94,16 +100,9 @@ class KernelDensityEstimate:
         logEpsilon
             The logarithm of the minimum value of the bias potential.
         """
-        logMeanInvDensity = self.logAccID - self.logSumWID
         return prefactor * np.logaddexp(
-            logMeanInvDensity - self.logSumW + self.logAccGaussian, logEpsilon
+            self.getLogMeanInvDensity() + self.getLogPDF(), logEpsilon
         )
-
-    def getLogMeanInvDensity(self):
-        """
-        Get the logarithm of the mean inverse probability density.
-        """
-        return self.logAccID - self.logSumWID
 
     def update(self, logWeight, axisSquaredDistances, variances, indices):
         """
@@ -136,7 +135,7 @@ class KernelDensityEstimate:
             return
         self.logSumWID = np.logaddexp(self.logSumWID, logWeight)
         density = self.logAccGaussian[tuple(reversed(indices))] - self.logSumW
-        self.logAccID = np.logaddexp(self.logAccID, logWeight - density)
+        self.logAccInvDens = np.logaddexp(self.logAccInvDens, logWeight - density)
 
 
 class OPES:
