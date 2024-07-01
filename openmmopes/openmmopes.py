@@ -17,7 +17,7 @@ from openmm import unit
 from openmm.app.metadynamics import _LoadedBias
 
 LOG2PI = np.log(2 * np.pi)
-DECAY_WINDOW: int = 10
+STATS_WINDOW: int = 10
 GLOBAL_VARIANCE: bool = True
 
 
@@ -183,20 +183,22 @@ class OPES:
         self._lbounds = np.array([v.minValue for v in variables])
         self._widths = np.array([v.gridWidth for v in variables])
         self._limits = sum(([v.minValue, v.maxValue] for v in variables), [])
-        self._prefactor = prefactor.value_in_unit(unit.kilojoules_per_mole)
-        self._logEpsilon = -barrier / prefactor
         self._periodic = numPeriodics == d
-        self._biasFactor = biasFactor
-        self._kbt = kbt.in_units_of(unit.kilojoules_per_mole)
-        self._adaptiveVariance = varianceFrequency is not None
-        self._interval = varianceFrequency or frequency
-        self._tau = DECAY_WINDOW * (frequency // varianceFrequency)
-        self._sampleMean = None
-        self._sampleVariance = np.array([v.biasWidth**2 for v in variables])
-        self._sampleCounter = 0
         self._grid = [
             np.linspace(v.minValue, v.maxValue, v.gridWidth) for v in variables
         ]
+
+        self._prefactor = prefactor.value_in_unit(unit.kilojoules_per_mole)
+        self._logEpsilon = -barrier / prefactor
+        self._biasFactor = biasFactor
+        self._kbt = kbt.in_units_of(unit.kilojoules_per_mole)
+
+        self._adaptiveVariance = varianceFrequency is not None
+        self._interval = varianceFrequency or frequency
+        self._tau = STATS_WINDOW * frequency // varianceFrequency
+        self._sampleMean = np.zeros(d)
+        self._sampleVariance = np.array([v.biasWidth**2 for v in variables])
+        self._sampleCounter = 0
 
         self._KDE = self._rwKDE = KernelDensityEstimate(self._widths)
         if exploreMode:
@@ -246,7 +248,7 @@ class OPES:
         delta = values - self._sampleMean
         if self._periodic:
             delta -= self._lengths * np.rint(delta / self._lengths)
-        x = 1 / min(self._tau, 1 + self._sampleCounter)
+        x = 1 / min(self._tau, self._sampleCounter)
         self._sampleMean += x * delta
         if self._periodic:
             self._sampleMean = (
@@ -269,8 +271,6 @@ class OPES:
         """
         stepsToGo = steps
         groups = {self._force.getForceGroup()}
-        if self._adaptiveVariance and self._sampleMean is None:
-            self._sampleMean = np.array(self.getCollectiveVariables(simulation))
         while stepsToGo > 0:
             nextSteps = stepsToGo
             nextSteps = min(
@@ -308,6 +308,10 @@ class OPES:
         biasPotential = self._KDE.getBias(self._prefactor, self._logEpsilon)
         variation = self._kbt * (self._rwKDE.logSumW - np.log(self._rwKDE.counter))
         return biasedFreeEnergy - biasPotential * unit.kilojoules_per_mole + variation
+
+    def getAverageDensity(self):
+        """Get the average density of the system as a function of the collective variables."""
+        return np.exp(-self._KDE.getLogMeanInvDensity())
 
     def getCollectiveVariables(self, simulation):
         """Get the current values of all collective variables in a Simulation."""
