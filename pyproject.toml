@@ -69,8 +69,21 @@ invalid-argument-type = "ignore"
 # exist -- these unit constants are evidently built at import time in a way
 # ty's static analysis can't trace, unlike the ones assigned as literal
 # module-level names.
-include = ["tests/test_opes.py"]
+include = ["tests/test_opes.py", "tests/test_integration.py"]
 
 [tool.ty.overrides.rules]
 unresolved-attribute = "ignore"
 unsupported-operator = "ignore"
+
+[[tool.ty.overrides]]
+# numpy-stubs gap, confirmed a false positive: ndarray.min() with no arguments
+# on an ordinary float64 array (e.g. analytic[mask].min() where analytic is
+# built as BARRIER_HEIGHT * (1 - grid**2) ** 2) runs correctly and returns a
+# float64 -- ty's own diagnostic even reports the array's dtype correctly as
+# float64 -- yet resolution picks the unrelated NDArray[object_] overload
+# instead of a float64-compatible one. Reproduced in isolation outside this
+# file, so this is a stub resolution gap, not anything about this code.
+include = ["tests/test_integration.py"]
+
+[tool.ty.overrides.rules]
+invalid-argument-type = "ignore"
