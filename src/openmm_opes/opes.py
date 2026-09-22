@@ -419,4 +419,47 @@ class OPES:
                 self._syncWithDisk()
 
     def _finishWarmup(self) -> None:
-        raise NotImplementedError
+        """Freeze sigma^(0) measured from the unbiased warm-up segment.
+
+        Nothing was deposited during warm-up, so the trajectory was unbiased
+        and this measurement is the unbiased variance. _variance holds a
+        sampled-distribution variance by convention, which is gamma times
+        wider, so that is what gets stored. This is the same transformation
+        the fixed-bandwidth path applies to biasWidth. See spec 7.5 and 7.7.
+        """
+        measured = self._variance["total"].get()
+        if np.any(measured <= 0):
+            raise ValueError(
+                "Warm-up produced a non-positive CV variance. Increase "
+                "warmupSteps or decrease varianceFrequency."
+            )
+        self._setFixedVariance(self._biasFactor * measured)
+        self._warmupComplete = True
+
+    def getState(self) -> dict:
+        """Flat, npz-writable snapshot of this sampler's accumulated state."""
+        state = self._getSharedState() if "self" in self._cases else {}
+        for prefix, key in (("total", "total"), ("totalRW", "total.rw")):
+            for name, value in self._kde[key].getState().items():
+                state[f"{prefix}_{name}"] = value
+        variance = self._variance["total"].getState()
+        state["totalVar_num"] = variance["num"]
+        state["totalVar_total"] = variance["total"]
+        # Persisted explicitly rather than re-derived from the step counter:
+        # re-deriving would risk rescaling an already-frozen variance by gamma
+        # a second time on reload. See spec 7.7.
+        state["warmupComplete"] = float(self._warmupComplete)
+        return state
+
+    def setState(self, state) -> None:
+        """Restore from a :meth:`getState` snapshot."""
+        for prefix, key in (("total", "total"), ("totalRW", "total.rw")):
+            self._kde[key] = self._kdeFromState(state, prefix)
+        average = RunningAverage(len(self.variables))
+        average.setState(
+            {"num": state["totalVar_num"], "total": state["totalVar_total"]}
+        )
+        self._variance["total"] = average
+        self._warmupComplete = bool(float(state["warmupComplete"]))
+        if self._warmupComplete and self.warmupSteps is not None:
+            self._adaptiveVariance = False

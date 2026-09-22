@@ -243,3 +243,88 @@ def test_opes_is_exported_from_the_package():
     import openmm_opes
 
     assert openmm_opes.OPES is OPES
+
+
+def runSteps(sampler, system, nsteps, seed=1234):
+    integrator = openmm.LangevinMiddleIntegrator(
+        300 * unit.kelvin, 10.0 / unit.picosecond, 0.002 * unit.picoseconds
+    )
+    integrator.setRandomNumberSeed(seed)
+    topology = app.Topology()
+    topology.addAtom("A", None, topology.addResidue("M", topology.addChain()))
+    simulation = app.Simulation(
+        topology, system, integrator, openmm.Platform.getPlatformByName("Reference")
+    )
+    simulation.context.setPositions([openmm.Vec3(0.1, 0, 0)])
+    simulation.context.setVelocitiesToTemperature(300 * unit.kelvin, seed + 1)
+    sampler.step(simulation, nsteps)
+    return simulation
+
+
+def makeHarmonicSystem():
+    system = openmm.System()
+    system.addParticle(12.0)
+    potential = openmm.CustomExternalForce("500*x^2")
+    potential.addParticle(0, [])
+    system.addForce(potential)
+    cv = openmm.CustomExternalForce("x")
+    cv.addParticle(0, [])
+    variable = app.BiasVariable(cv, -1.0, 1.0, 0.05, False, 51)
+    return system, variable
+
+
+def test_warmup_requires_variance_frequency():
+    with pytest.raises(ValueError, match="warmupSteps requires varianceFrequency"):
+        makeOPES(varianceFrequency=None, warmupSteps=100)
+
+
+def test_warmup_must_span_at_least_two_intervals():
+    with pytest.raises(ValueError, match="at least two varianceFrequency"):
+        makeOPES(varianceFrequency=50, warmupSteps=50)
+
+
+def test_no_kernels_are_deposited_during_warmup():
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10, warmupSteps=500)
+    runSteps(sampler, system, 400)
+    assert sampler.getNumKernels() == 0
+    assert not sampler._warmupComplete
+
+
+def test_deposition_starts_after_warmup_and_variance_freezes():
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10, warmupSteps=500)
+    runSteps(sampler, system, 1500)
+    assert sampler._warmupComplete
+    assert sampler.getNumKernels() > 0
+    frozen = sampler.getVariance().copy()
+    runSteps(sampler, system, 500)
+    assert sampler.getVariance() == pytest.approx(frozen)
+
+
+def test_frozen_variance_is_gamma_times_the_measured_unbiased_variance():
+    """Spec 7.7: warm-up measures an UNBIASED variance, while _variance holds
+    a sampled one, so freezing stores gamma times the measurement."""
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10, warmupSteps=500)
+    runSteps(sampler, system, 500)
+    assert sampler._warmupComplete
+    reweighted = sampler._kde["total.rw"]
+    sampler.addKernel(np.array([0.0]), 0.0 * unit.kilojoules_per_mole)
+    sigma0 = np.sqrt(sampler.getVariance() / sampler._biasFactor)
+    # Silverman still applies to the very first kernel, where Neff == 1
+    silverman = (1 * (1 + 2) / 4) ** (-1 / (1 + 4))
+    assert reweighted._kernels[0].bandwidth[0] == pytest.approx(sigma0[0] * silverman)
+
+
+def test_warmup_state_round_trips_without_rescaling_twice():
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10, warmupSteps=500)
+    runSteps(sampler, system, 600)
+    frozen = sampler.getVariance().copy()
+
+    system2, variable2 = makeHarmonicSystem()
+    restored = OPES(system2, [variable2], 300.0, 20.0, 100, 10, warmupSteps=500)
+    restored.setState(sampler.getState())
+    assert restored._warmupComplete
+    assert restored.getVariance() == pytest.approx(frozen)

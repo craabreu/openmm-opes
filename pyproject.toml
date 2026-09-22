@@ -61,3 +61,16 @@ include = ["tests/data/make_reference.py"]
 
 [tool.ty.overrides.rules]
 invalid-argument-type = "ignore"
+
+[[tool.ty.overrides]]
+# openmm.unit stub gap, confirmed a false positive: unit.kelvin and
+# unit.kilojoules_per_mole resolve fine, but unit.picosecond/picoseconds do
+# not, even though `dir(unit)` and runtime multiplication both confirm they
+# exist -- these unit constants are evidently built at import time in a way
+# ty's static analysis can't trace, unlike the ones assigned as literal
+# module-level names.
+include = ["tests/test_opes.py"]
+
+[tool.ty.overrides.rules]
+unresolved-attribute = "ignore"
+unsupported-operator = "ignore"
