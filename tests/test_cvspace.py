@@ -71,3 +71,22 @@ def test_folded_grid_is_identity_when_not_bounded():
     space = makeSpace((0.0, 1.0, 11, False))
     values = np.arange(11.0)
     assert space.foldedGrid(values) == pytest.approx(values)
+
+
+def test_two_periodic_cvs_construct_without_error():
+    """Regression: the source implementation cannot construct this at all.
+
+    It indexes self._lengths[self._pdims] with self._pdims a bare tuple.
+    Numpy treats a length-1 tuple index as basic indexing (collapses to a
+    scalar) and a longer tuple as one index per array dimension (raises
+    "too many indices" on a 1-D array). Confirmed against the root
+    online_kde.py and both its frozen per-experiment copies, identical in
+    all three: constructing a CVSpace with ANY periodic CV crashes, which
+    includes the phi/psi (2 periodic CVs) configuration used in both OPES
+    papers' own example figures. This port uses list(self._pdims) instead,
+    which numpy treats as fancy indexing and returns an array as intended.
+    """
+    space = makeSpace((-np.pi, np.pi, 41, True), (-np.pi, np.pi, 41, True))
+    assert space.gridShape == (41, 41)
+    disp = space.displacement(np.array([3.0, 3.0]), np.array([-3.0, -3.0]))
+    assert disp == pytest.approx([2 * np.pi - 6.0, 2 * np.pi - 6.0])
