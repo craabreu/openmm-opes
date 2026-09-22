@@ -5,6 +5,7 @@ Pure NumPy/SciPy. This module must not import openmm.
 
 from __future__ import annotations
 
+import functools
 from collections import namedtuple
 
 import numpy as np
@@ -111,3 +112,114 @@ class CVSpace:
                     values, left, right = np.array_split(values, 3, axis=i)
                     values = np.logaddexp(left, np.logaddexp(values, right))
         return values
+
+
+class KernelShape:
+    """A kernel profile: its per-dimension log normalization and its exponent."""
+
+    def __init__(self, name: str, logNorm: float, exponents):
+        self.name = name
+        self.logNorm = logNorm
+        self._exponents = exponents
+
+    def exponents(self, x):
+        """Log of the kernel profile at scaled distances ``x``."""
+        return self._exponents(x)
+
+
+def _gaussianExponents(x):
+    return -0.5 * x**2
+
+
+def _compactExponents(x):
+    values = 9 - x**2
+    mask = values > 0
+    result = np.empty_like(values)
+    result[mask] = 4 * np.log(values[mask])
+    result[~mask] = -np.inf
+    return result
+
+
+#: Unbounded Gaussian profile; the default and the one both papers use.
+GAUSSIAN = KernelShape("gaussian", np.log(2 * np.pi) / 2, _gaussianExponents)
+
+#: Compact quartic profile with support of +/- 3 bandwidths. Its normalization
+#: constant is exactly the integral of (9 - x**2)**4 over [-3, 3].
+COMPACT = KernelShape("compact", np.log(559872 / 35), _compactExponents)
+
+KERNEL_SHAPES = {shape.name: shape for shape in (GAUSSIAN, COMPACT)}
+
+
+class Kernel:
+    """A multivariate kernel with diagonal covariance."""
+
+    def __init__(
+        self, cvSpace, position, bandwidth, logWeight, numSamples=1, shape=GAUSSIAN
+    ):
+        self.cvSpace = cvSpace
+        self.position = np.array(position, dtype=float)
+        self.bandwidth = np.array(bandwidth, dtype=float)
+        self.logWeight = logWeight
+        self.numSamples = numSamples
+        self.shape = shape
+        self.logHeight = self._computeLogHeight()
+
+    def __copy__(self):
+        return Kernel(
+            self.cvSpace,
+            self.position,
+            self.bandwidth,
+            self.logWeight,
+            self.numSamples,
+            self.shape,
+        )
+
+    def _computeLogHeight(self):
+        if np.any(self.bandwidth == 0):
+            return -np.inf
+        d = self.cvSpace.numDimensions
+        return self.logWeight - d * self.shape.logNorm - np.sum(np.log(self.bandwidth))
+
+    def _scaledDistances(self, points, bandwidths):
+        return self.cvSpace.displacement(self.position, points) / bandwidths
+
+    def findNearest(self, centers, bandwidths, ignore=()):
+        """Index of and squared Mahalanobis distance to the nearest center."""
+        if centers.size == 0:
+            return -1, np.inf
+        sqDistances = np.sum(self._scaledDistances(centers, bandwidths) ** 2, axis=-1)
+        if len(ignore):
+            sqDistances[list(ignore)] = np.inf
+        index = int(np.argmin(sqDistances))
+        return index, sqDistances[index]
+
+    def merge(self, other) -> None:
+        """Absorb ``other``, preserving total weight, mean and second moment."""
+        logSumWeights = np.logaddexp(self.logWeight, other.logWeight)
+        w1 = np.exp(self.logWeight - logSumWeights)
+        w2 = np.exp(other.logWeight - logSumWeights)
+        disp = self.cvSpace.displacement(self.position, other.position)
+        self.position = self.cvSpace.endpoint(self.position, w2 * disp)
+        self.bandwidth = np.sqrt(
+            w1 * self.bandwidth**2 + w2 * other.bandwidth**2 + w1 * w2 * disp**2
+        )
+        self.logWeight = logSumWeights
+        self.numSamples += other.numSamples
+        self.logHeight = self._computeLogHeight()
+
+    def evaluate(self, points):
+        """Log of the kernel at the given point or points."""
+        return self.logHeight + np.sum(
+            self.shape.exponents(self._scaledDistances(points, self.bandwidth)), axis=-1
+        )
+
+    def evaluateOnGrid(self):
+        """Log of the kernel on the CV-space grid, in gridShape order."""
+        distances = self.cvSpace.gridDistances(self.position)
+        exponents = [
+            self.shape.exponents(dist / sigma)
+            for dist, sigma in zip(distances, self.bandwidth, strict=True)
+        ]
+        return self.cvSpace.foldedGrid(
+            self.logHeight + functools.reduce(np.add.outer, reversed(exponents))
+        )
