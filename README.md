@@ -8,7 +8,6 @@ Enhanced Sampling (OPES) and OPES-explore.
 ## Installation
 
 ```bash
-mamba install -c conda-forge openmm
 pip install openmm-opes
 ```
 
@@ -24,6 +23,12 @@ fes = sampler.getFreeEnergy()
 ```
 
 Full documentation: <https://craabreu.github.io/openmm-opes>
+
+## Origin
+
+This library packages and hardens the prototype implementation developed in
+[craabreu/opes-simulations](https://github.com/craabreu/opes-simulations),
+porting its `OPES`/`OnlineKDE` classes into a tested, documented package.
 
 ## References
 

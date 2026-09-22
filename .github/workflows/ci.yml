@@ -13,10 +13,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      # Deliberately does NOT install the package: openmm's canonical channel
-      # is conda-forge. ruff needs nothing installed, and ty needs numpy,
-      # scipy and pytest resolvable (all pure-Python-installable), with
-      # openmm covered by allowed-unresolved-imports.
+      # Deliberately does NOT install openmm: it ships no type stubs, so
+      # installing it would buy ty nothing here (see allowed-unresolved-imports
+      # below). ruff needs nothing installed, and ty needs numpy, scipy and
+      # pytest resolvable (all real, first-party-typed dependencies).
       - run: pip install ruff ty numpy scipy pytest
       - run: ruff check src tests
       - run: ruff format --check src tests
@@ -28,18 +28,15 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.13"]
-    defaults:
-      run:
-        shell: bash -el {0}
     steps:
       - uses: actions/checkout@v4
-      # OpenMM's canonical distribution channel is conda-forge, not PyPI.
-      - uses: mamba-org/setup-micromamba@v1
+      - uses: actions/setup-python@v5
         with:
-          environment-file: environment.yml
-          create-args: python=${{ matrix.python-version }}
-          cache-environment: true
-      - run: pip install --no-deps -e .
+          python-version: ${{ matrix.python-version }}
+      # OpenMM publishes official wheels to PyPI (openmm/openmm-wheels) with
+      # full coverage across manylinux, macOS (x86_64 + arm64) and Windows,
+      # so no conda/mamba setup is needed to install it.
+      - run: pip install -e ".[dev]"
       - run: pytest -v
 
   docs:

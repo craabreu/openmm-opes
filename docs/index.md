@@ -11,7 +11,12 @@ of the barrier to overcome.
 
 ## Installation
 
-OpenMM is distributed through conda-forge, so that is the supported route:
+```bash
+pip install openmm-opes
+```
+
+OpenMM itself is also distributed through conda-forge, if you prefer conda
+environments:
 
 ```bash
 mamba install -c conda-forge openmm
@@ -34,6 +39,12 @@ fes = sampler.getFreeEnergy()
 
 See the [quickstart](quickstart.md) for a complete runnable example, and the
 [theory](theory.md) page for how the code maps onto the published equations.
+
+## Origin
+
+This library packages and hardens the prototype implementation developed in
+[craabreu/opes-simulations](https://github.com/craabreu/opes-simulations),
+porting its `OPES`/`OnlineKDE` classes into a tested, documented package.
 
 ## References
 
