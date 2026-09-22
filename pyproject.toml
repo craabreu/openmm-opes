@@ -1,0 +1,38 @@
+[project]
+name = "openmm-opes"
+version = "0.1.0"
+description = "OpenMM implementation of On-the-fly Probability Enhanced Sampling (OPES)"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Charlles Abreu" }]
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24", "scipy>=1.10", "openmm>=8.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.16", "ty==0.0.72"]
+# mkdocs >= 1.6 is required for the exclude_docs setting used by mkdocs.yml
+docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "mkdocstrings[python]>=0.24"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: end-to-end simulations that take minutes"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+include = ["src/**/*.py", "tests/**/*.py"]
+
+[tool.ruff.lint]
+# Deliberately no "N" rules: the public API is camelCase to match OpenMM.
+select = ["E", "F", "I", "UP", "B", "C4", "RUF"]
+
+[tool.ty.analysis]
+# OpenMM ships no type stubs, and the lint CI job installs it without conda.
+allowed-unresolved-imports = ["openmm", "openmm.**"]
