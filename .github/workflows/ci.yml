@@ -14,9 +14,10 @@ jobs:
         with:
           python-version: "3.11"
       # Deliberately does NOT install the package: openmm's canonical channel
-      # is conda-forge. ruff needs nothing installed, and ty needs only numpy
-      # and scipy resolvable, with openmm covered by allowed-unresolved-imports.
-      - run: pip install ruff ty numpy scipy
+      # is conda-forge. ruff needs nothing installed, and ty needs numpy,
+      # scipy and pytest resolvable (all pure-Python-installable), with
+      # openmm covered by allowed-unresolved-imports.
+      - run: pip install ruff ty numpy scipy pytest
       - run: ruff check src tests
       - run: ruff format --check src tests
       - run: ty check src tests
