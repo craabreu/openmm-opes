@@ -1,0 +1,41 @@
+site_name: openmm-opes
+site_description: OpenMM implementation of On-the-fly Probability Enhanced Sampling
+repo_url: https://github.com/craabreu/openmm-opes
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle: { icon: material/weather-night, name: Dark mode }
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle: { icon: material/weather-sunny, name: Light mode }
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: numpy
+            show_source: false
+
+markdown_extensions:
+  - admonition
+  - pymdownx.arithmatex: { generic: true }
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+# Design documents live under docs/ but are not part of the published site.
+exclude_docs: |
+  superpowers/
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Theory: theory.md
+  - API reference: api.md

@@ -40,3 +40,19 @@ jobs:
           cache-environment: true
       - run: pip install --no-deps -e .
       - run: pytest -v
+
+  docs:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # mkdocstrings reads the source statically via griffe, so the docs build
+      # needs neither openmm nor an importable package at runtime.
+      - run: pip install mkdocs-material "mkdocstrings[python]"
+      - run: pip install --no-deps -e .
+      - run: mkdocs gh-deploy --force
