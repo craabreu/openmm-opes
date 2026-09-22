@@ -148,3 +148,98 @@ def test_fixed_bandwidth_stores_gamma_times_the_unbiased_variance():
     sampler = makeOPES(varianceFrequency=None, sigma=0.1)
     expected = sampler._biasFactor * 0.1**2
     assert sampler.getVariance() == pytest.approx([expected])
+
+
+def referenceBias(sampler):
+    """Eq. iter_bias / iter_bias-explore, evaluated independently."""
+    kde = sampler._kde["total" if sampler.exploreMode else "total.rw"]
+    probability = np.exp(kde.getLogPDF())
+    normalization = np.exp(kde.getLogMeanDensity())
+    prefactor = sampler._prefactor.value_in_unit(unit.kilojoules_per_mole)
+    epsilon = np.exp(sampler._logEpsilon)
+    return prefactor * np.log(probability / normalization + epsilon)
+
+
+@pytest.mark.parametrize("exploreMode", [False, True])
+def test_bias_matches_the_published_equation(exploreMode):
+    sampler = makeOPES(exploreMode=exploreMode)
+    rng = np.random.default_rng(1)
+    for _ in range(40):
+        sampler.addKernel(
+            np.array([rng.uniform(-1.5, 1.5)]),
+            rng.uniform(0, 5) * unit.kilojoules_per_mole,
+            variance=np.array([0.01]),
+        )
+    got = sampler.getBias().value_in_unit(unit.kilojoules_per_mole)
+    assert got == pytest.approx(referenceBias(sampler), abs=1e-10)
+
+
+def test_prefactor_follows_the_mode():
+    kbt = (unit.MOLAR_GAS_CONSTANT_R * 300 * unit.kelvin).value_in_unit(
+        unit.kilojoules_per_mole
+    )
+    plain = makeOPES()
+    explore = makeOPES(exploreMode=True)
+    gamma = plain._biasFactor
+    assert plain._prefactor.value_in_unit(unit.kilojoules_per_mole) == pytest.approx(
+        (1 - 1 / gamma) * kbt
+    )
+    assert explore._prefactor.value_in_unit(unit.kilojoules_per_mole) == pytest.approx(
+        (gamma - 1) * kbt
+    )
+
+
+def test_epsilon_is_exp_minus_barrier_over_prefactor():
+    sampler = makeOPES()
+    prefactor = sampler._prefactor.value_in_unit(unit.kilojoules_per_mole)
+    assert np.exp(sampler._logEpsilon) == pytest.approx(np.exp(-20.0 / prefactor))
+
+
+def test_free_energy_always_uses_the_reweighted_estimate():
+    sampler = makeOPES(exploreMode=True)
+    sampler.addKernel(
+        np.array([0.0]), 0.0 * unit.kilojoules_per_mole, variance=np.array([0.01])
+    )
+    kbt = sampler._kbt.value_in_unit(unit.kilojoules_per_mole)
+    expected = -kbt * sampler._kde["total.rw"].getLogPDF()
+    got = sampler.getFreeEnergy().value_in_unit(unit.kilojoules_per_mole)
+    assert got == pytest.approx(expected)
+
+
+def test_reweighted_kde_uses_variance_divided_by_the_bias_factor():
+    sampler = makeOPES()
+    sampler.addKernel(
+        np.array([0.0]), 0.0 * unit.kilojoules_per_mole, variance=np.array([0.04])
+    )
+    plain = sampler._kde["total"]._kernels[0].bandwidth[0]
+    reweighted = sampler._kde["total.rw"]._kernels[0].bandwidth[0]
+    assert plain / reweighted == pytest.approx(np.sqrt(sampler._biasFactor))
+
+
+def test_non_positive_variance_skips_deposition_instead_of_producing_nan():
+    """Regression for spec 7.4.4.
+
+    A zero variance made a zero-bandwidth kernel whose logHeight is -inf,
+    while its weight still entered logSumW. getLogPDF and getLogMeanDensity
+    were then both -inf and their difference NaN, which reached the forces.
+    """
+    sampler = makeOPES()
+    with pytest.warns(UserWarning, match="variance"):
+        sampler.addKernel(
+            np.array([0.0]),
+            0.0 * unit.kilojoules_per_mole,
+            variance=np.array([0.0]),
+        )
+    assert sampler.getNumKernels() == 0
+    sampler.addKernel(
+        np.array([0.0]), 0.0 * unit.kilojoules_per_mole, variance=np.array([0.01])
+    )
+    assert np.all(
+        np.isfinite(sampler.getBias().value_in_unit(unit.kilojoules_per_mole))
+    )
+
+
+def test_opes_is_exported_from_the_package():
+    import openmm_opes
+
+    assert openmm_opes.OPES is OPES

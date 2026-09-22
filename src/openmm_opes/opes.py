@@ -6,6 +6,9 @@ unit-coercion idiom, same force-group selection, same ``step`` contract.
 
 from __future__ import annotations
 
+import warnings
+from copy import copy
+
 import numpy as np
 import openmm as mm
 from openmm import unit
@@ -264,3 +267,156 @@ class OPES:
     def getNumKernels(self) -> int:
         """Number of kernels in the estimate that defines the bias."""
         return self._kde["total" if self.exploreMode else "total.rw"].getNumKernels()
+
+    def getBias(self):
+        """The OPES bias potential on the grid."""
+        kde = self._kde["total" if self.exploreMode else "total.rw"]
+        return self._prefactor * np.logaddexp(
+            kde.getLogPDF() - kde.getLogMeanDensity(), self._logEpsilon
+        )
+
+    def getFreeEnergy(self):
+        """Free energy as a function of the collective variables.
+
+        Returned as an N-dimensional array in kJ/mole. The i'th position along
+        an axis corresponds to ``minValue + i*(maxValue-minValue)/gridWidth``.
+        Always the importance-sampling estimate, which converges better than
+        the direct one in explore mode.
+        """
+        return -self._kbt * self._kde["total.rw"].getLogPDF()
+
+    def getAverageDensity(self):
+        """Z_n, the mean density over the explored CV space."""
+        kde = self._kde["total" if self.exploreMode else "total.rw"]
+        return np.exp(kde.getLogMeanDensity())
+
+    def getCollectiveVariables(self, simulation):
+        """Current values of all collective variables in a Simulation."""
+        return self._force.getCollectiveVariableValues(simulation.context)
+
+    def updateContext(self, context) -> None:
+        """Push the current bias into a Context."""
+        bias = self.getBias().value_in_unit(unit.kilojoules_per_mole)
+        self._force.getTabulatedFunction(0).setFunctionParameters(
+            *self._widths, bias.ravel(), *self._limits
+        )
+        self._force.updateParametersInContext(context)
+
+    def addKernel(self, values, biasEnergy, variance=None) -> None:
+        """Deposit a kernel into the probability estimates.
+
+        This does not refresh any Context; call :meth:`updateContext`
+        afterwards if a simulation is running.
+        """
+        if not unit.is_quantity(biasEnergy):
+            biasEnergy = biasEnergy * unit.kilojoules_per_mole
+        if variance is None:
+            variance = self._variance["total"].get()
+        if np.any(np.asarray(variance) <= 0):
+            # Spec 7.4.4: a zero bandwidth poisons the estimate with NaN.
+            warnings.warn(
+                "Skipping kernel deposition: the CV variance estimate is not "
+                "yet positive. Use a varianceFrequency smaller than frequency, "
+                "or set warmupSteps.",
+                stacklevel=2,
+            )
+            return
+        for case in self._cases:
+            self._kde[case].update(values, 0.0, variance)
+            self._kde[f"{case}.rw"].update(
+                values, biasEnergy / self._kbt, variance / self._biasFactor
+            )
+
+    def _updateSampleStats(self, values) -> None:
+        self._counter += 1
+        delta = self._cvSpace.displacement(self._sampleMean, values)
+        x = 1 / min(self._tau, self._counter)
+        self._sampleMean = self._cvSpace.endpoint(self._sampleMean, x * delta)
+        sqdev = delta * self._cvSpace.displacement(self._sampleMean, values)
+        for case in self._cases:
+            self._variance[case].update(sqdev)
+
+    def _syncWithDisk(self) -> None:
+        # Only ever called when saveFrequency is set, which _validate ties to
+        # biasDir being set, which is what constructs self._sharer.
+        assert self._sharer is not None
+        self._sharer.save(self._getSharedState())
+        if not self._sharer.load():
+            return
+        self._kde["total"] = copy(self._kde["self"])
+        self._kde["total.rw"] = copy(self._kde["self.rw"])
+        self._variance["total"] = self._variance["self"].copy()
+        for state in self._sharer.getLoadedStates().values():
+            self._kde["total"] += self._kdeFromState(state, "kde")
+            self._kde["total.rw"] += self._kdeFromState(state, "kdeRW")
+            peer = RunningAverage(len(self.variables))
+            peer.setState({"num": state["var_num"], "total": state["var_total"]})
+            self._variance["total"] += peer
+
+    def _getSharedState(self) -> dict:
+        state = {}
+        for prefix, key in (("kde", "self"), ("kdeRW", "self.rw")):
+            for name, value in self._kde[key].getState().items():
+                state[f"{prefix}_{name}"] = value
+        variance = self._variance["self"].getState()
+        state["var_num"] = variance["num"]
+        state["var_total"] = variance["total"]
+        return state
+
+    def _kdeFromState(self, state, prefix):
+        kde = OnlineKDE(self._cvSpace)
+        strip = len(prefix) + 1
+        kde.setState(
+            {
+                key[strip:]: value
+                for key, value in state.items()
+                if key.startswith(f"{prefix}_")
+            }
+        )
+        return kde
+
+    def step(self, simulation, steps) -> None:
+        """Advance the simulation by a number of time steps.
+
+        Parameters
+        ----------
+        simulation: Simulation
+            The Simulation to advance.
+        steps: int
+            The number of time steps to integrate.
+        """
+        stepsToGo = steps
+        while stepsToGo > 0:
+            nextSteps = min(
+                stepsToGo,
+                self._interval - simulation.currentStep % self._interval,
+            )
+            simulation.step(nextSteps)
+            if simulation.currentStep % self._interval == 0:
+                self._onInterval(simulation)
+            stepsToGo -= nextSteps
+
+    def _onInterval(self, simulation) -> None:
+        position = self.getCollectiveVariables(simulation)
+        if not self._warmupComplete:
+            self._updateSampleStats(position)
+            if simulation.currentStep >= self.warmupSteps:
+                self._finishWarmup()
+            return
+        if self._adaptiveVariance:
+            self._updateSampleStats(position)
+        if simulation.currentStep % self.frequency == 0:
+            groups = {self._force.getForceGroup()}
+            energy = simulation.context.getState(
+                getEnergy=True, groups=groups
+            ).getPotentialEnergy()
+            self.addKernel(position, energy)
+            self.updateContext(simulation.context)
+            if (
+                self.saveFrequency is not None
+                and simulation.currentStep % self.saveFrequency == 0
+            ):
+                self._syncWithDisk()
+
+    def _finishWarmup(self) -> None:
+        raise NotImplementedError
