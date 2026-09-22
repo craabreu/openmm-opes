@@ -398,3 +398,53 @@ class OnlineKDE:
             np.logaddexp.reduce([k.evaluate(point) for k in self._kernels])
             - self._logSumW
         )
+
+    def getState(self) -> dict:
+        """Flat, npz-writable snapshot of this estimate.
+
+        The CVSpace is deliberately excluded: all walkers share identical CV
+        definitions, so a reader constructs its own and calls setState.
+        """
+        d = self._cvSpace.numDimensions
+        if self._kernels:
+            positions = np.stack([k.position for k in self._kernels])
+            bandwidths = np.stack([k.bandwidth for k in self._kernels])
+            logWeights = np.array([k.logWeight for k in self._kernels])
+            numSamples = np.array([k.numSamples for k in self._kernels])
+        else:
+            positions = np.empty((0, d))
+            bandwidths = np.empty((0, d))
+            logWeights = np.empty(0)
+            numSamples = np.empty(0, dtype=int)
+        return {
+            "positions": positions,
+            "bandwidths": bandwidths,
+            "logWeights": logWeights,
+            "numSamples": numSamples,
+            "logSumW": float(self._logSumW),
+            "logSumWSq": float(self._logSumWSq),
+            "logPK": self._logPK.copy(),
+        }
+
+    def setState(self, state) -> None:
+        """Restore from a :meth:`getState` snapshot, discarding current contents."""
+        self._kernels = [
+            Kernel(self._cvSpace, position, bandwidth, logWeight, int(n), self._shape)
+            for position, bandwidth, logWeight, n in zip(
+                state["positions"],
+                state["bandwidths"],
+                state["logWeights"],
+                state["numSamples"],
+                strict=True,
+            )
+        ]
+        self._logSumW = float(state["logSumW"])
+        self._logSumWSq = float(state["logSumWSq"])
+        self._logPK = np.asarray(state["logPK"]).copy()
+        # Seeded with -inf so an empty kernel list restores cleanly; the source
+        # used a bare reduce here and raised TypeError on an empty sequence.
+        self._logPG = functools.reduce(
+            np.logaddexp,
+            (k.evaluateOnGrid() for k in self._kernels),
+            np.full(self._cvSpace.gridShape, -np.inf),
+        )

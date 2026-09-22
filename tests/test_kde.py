@@ -157,3 +157,46 @@ def test_removal_cancellation_margin_stays_bounded_away_from_zero():
         np.stack([k.evaluate(centers) for k in kde._kernels]), axis=0
     )
     assert kde._logPK == pytest.approx(recomputed, abs=1e-9)
+
+
+def test_state_round_trip_preserves_the_density():
+    space = makeSpace((-4.0, 4.0, 41, False))
+    kde = OnlineKDE(space)
+    rng = np.random.default_rng(7)
+    for _ in range(40):
+        kde.update(np.array([rng.normal()]), rng.normal(), np.array([0.09]))
+
+    restored = OnlineKDE(space)
+    restored.setState(kde.getState())
+
+    assert restored.getNumKernels() == kde.getNumKernels()
+    # setState rebuilds _logPG from scratch via a single reduce, while the
+    # original built it incrementally through many merge/subtract operations;
+    # a different summation order gives different (still tiny) roundoff.
+    assert restored.getLogPDF() == pytest.approx(kde.getLogPDF(), rel=1e-6)
+    assert restored.getLogMeanDensity() == pytest.approx(kde.getLogMeanDensity())
+
+
+def test_empty_kde_state_round_trips():
+    """Regression for spec 7.4.3: restoring an empty KDE raised TypeError.
+
+    Routine on the warm-up path, where a walker syncs before its first deposit.
+    """
+    space = makeSpace((-4.0, 4.0, 41, False))
+    restored = OnlineKDE(space)
+    restored.setState(OnlineKDE(space).getState())
+    assert restored.getNumKernels() == 0
+    assert not restored
+    # -inf - (-inf) = NaN: an undefined density with zero data, not a bug.
+    assert np.all(np.isnan(restored.getLogPDF()))
+
+
+def test_state_contains_only_arrays_and_scalars():
+    """The state must be np.savez-able, so no objects allowed."""
+    space = makeSpace((-4.0, 4.0, 41, False))
+    kde = OnlineKDE(space)
+    kde.update(np.array([0.0]), 0.0, np.array([0.25]))
+    for key, value in kde.getState().items():
+        assert isinstance(value, (np.ndarray, float, int)), key
+        if isinstance(value, np.ndarray):
+            assert value.dtype != object, key
