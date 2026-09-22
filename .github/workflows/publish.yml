@@ -1,0 +1,31 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install build twine
+      - run: python -m build
+      # Fails loudly on a version mismatch rather than silently publishing
+      # the wrong artifact if a release tag and pyproject.toml diverge.
+      - run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "pyproject.toml version ($version) does not match release tag ($tag)"
+            exit 1
+          fi
+      - run: twine check dist/*
+      - env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: twine upload dist/*
