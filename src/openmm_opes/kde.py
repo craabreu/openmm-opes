@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import functools
 from collections import namedtuple
+from copy import copy
 
 import numpy as np
 
@@ -222,4 +223,178 @@ class Kernel:
         ]
         return self.cvSpace.foldedGrid(
             self.logHeight + functools.reduce(np.add.outer, reversed(exponents))
+        )
+
+
+class OnlineKDE:
+    """Online kernel density estimate with on-the-fly kernel compression.
+
+    Parameters
+    ----------
+    cvSpace
+        The :class:`CVSpace` the estimate lives on.
+    compressionThreshold
+        Merge a new kernel into any existing kernel closer than this, measured
+        as a Mahalanobis distance. Zero disables merging.
+    useExistingBandwidths
+        Whether the nearest-neighbour search scales distances by the existing
+        kernels' bandwidths rather than the incoming kernel's.
+    kernelShape
+        Either ``"gaussian"`` or ``"compact"``.
+    """
+
+    def __init__(
+        self,
+        cvSpace,
+        compressionThreshold: float = 1.0,
+        useExistingBandwidths: bool = True,
+        kernelShape: str = "gaussian",
+    ):
+        if kernelShape not in KERNEL_SHAPES:
+            raise ValueError(
+                f"Unknown kernelShape {kernelShape!r}; "
+                f"expected one of {sorted(KERNEL_SHAPES)}"
+            )
+        self._cvSpace = cvSpace
+        self._compressionThreshold = compressionThreshold
+        self._useExistingBandwidths = useExistingBandwidths
+        self._shape = KERNEL_SHAPES[kernelShape]
+        self._kernels: list[Kernel] = []
+        self._logSumW = -np.inf
+        self._logSumWSq = -np.inf
+        self._logPK = np.empty(0)
+        self._logPG = np.full(cvSpace.gridShape, -np.inf)
+        self._d = cvSpace.numDimensions
+
+    def __bool__(self) -> bool:
+        return bool(self._kernels)
+
+    def __copy__(self):
+        new = self.__class__(
+            self._cvSpace,
+            self._compressionThreshold,
+            self._useExistingBandwidths,
+            self._shape.name,
+        )
+        new._kernels = list(map(copy, self._kernels))
+        new._logSumW = self._logSumW
+        new._logSumWSq = self._logSumWSq
+        new._logPK = self._logPK.copy()
+        new._logPG = self._logPG.copy()
+        return new
+
+    def __iadd__(self, other):
+        for kernel in other._kernels:
+            self._addKernel(
+                kernel.position,
+                kernel.bandwidth,
+                kernel.logWeight,
+                kernel.numSamples,
+                adjustBandwidth=False,
+            )
+        return self
+
+    @staticmethod
+    def _logsubexp(x, y):
+        """log(exp(x) - exp(y)), elementwise and numerically stable."""
+        result = np.full_like(x, -np.inf)
+        valid = y < x
+        inner = -np.exp(y[valid] - x[valid])
+        representable = inner > -1.0
+        inner[representable] = np.log1p(inner[representable])
+        inner[~representable] = -np.inf
+        result[valid] = inner + x[valid]
+        return result
+
+    def _removeKernels(self, centers, toRemove):
+        """Remove kernels by index, subtracting their contributions in log space.
+
+        Callers MUST add any replacement kernel's contribution to _logPK and
+        _logPG *before* calling this. _logsubexp loses precision as its two
+        arguments converge, and the replacement is what keeps the removed
+        kernel from dominating the density at its own center. See spec 12.4;
+        tests/test_kde.py pins the resulting margin.
+        """
+        toRemove = sorted(toRemove, reverse=True)
+        removed = []
+        for index in toRemove:
+            kernel = self._kernels.pop(index)
+            self._logPK = self._logsubexp(self._logPK, kernel.evaluate(centers))
+            self._logPG = self._logsubexp(self._logPG, kernel.evaluateOnGrid())
+            removed.append(kernel)
+        self._logPK = np.delete(self._logPK, toRemove)
+        return removed
+
+    def _pushKernel(self, newKernel):
+        centers = np.stack([k.position for k in self._kernels])
+        bandwidths = (
+            np.stack([k.bandwidth for k in self._kernels])
+            if self._useExistingBandwidths
+            else newKernel.bandwidth
+        )
+        threshold = self._compressionThreshold
+        index, minSqDist = newKernel.findNearest(centers, bandwidths)
+        toRemove = []
+        # threshold > 0 guard: without it, coincident kernels satisfy 0 <= 0
+        # and merge even when compression is meant to be disabled.
+        while threshold > 0 and index >= 0 and minSqDist <= threshold**2:
+            toRemove.append(index)
+            newKernel.merge(self._kernels[index])
+            index, minSqDist = newKernel.findNearest(centers, bandwidths, toRemove)
+        self._logPK = np.logaddexp(self._logPK, newKernel.evaluate(centers))
+        self._logPG = np.logaddexp(self._logPG, newKernel.evaluateOnGrid())
+        if toRemove:
+            self._removeKernels(centers, toRemove)
+        self._kernels.append(newKernel)
+        self._logPK = np.append(
+            self._logPK,
+            np.logaddexp.reduce(
+                [k.evaluate(newKernel.position) for k in self._kernels]
+            ),
+        )
+
+    def _addKernel(
+        self, position, bandwidth, logWeight, numSamples=1, adjustBandwidth=True
+    ):
+        self._logSumW = np.logaddexp(self._logSumW, logWeight)
+        self._logSumWSq = np.logaddexp(self._logSumWSq, 2 * logWeight)
+        if adjustBandwidth:
+            neff = np.exp(2 * self._logSumW - self._logSumWSq)
+            silverman = (neff * (self._d + 2) / 4) ** (-1 / (self._d + 4))
+            bandwidth = bandwidth * silverman
+        newKernel = Kernel(
+            self._cvSpace, position, bandwidth, logWeight, numSamples, self._shape
+        )
+        if self._kernels:
+            self._pushKernel(newKernel)
+        else:
+            self._kernels = [newKernel]
+            self._logPG = newKernel.evaluateOnGrid()
+            self._logPK = np.array([newKernel.logHeight])
+
+    def update(self, position, logWeight, variance) -> None:
+        """Deposit a kernel of the given log weight and per-CV variance."""
+        self._addKernel(position, np.sqrt(variance), logWeight)
+
+    def getNumKernels(self) -> int:
+        """Number of compressed kernels currently stored."""
+        return len(self._kernels)
+
+    def getLogPDF(self):
+        """Log of the normalized probability density on the grid."""
+        return self._logPG - self._logSumW
+
+    def getLogMeanDensity(self) -> float:
+        """Log of Z_n, the mean density over the compressed kernel centers."""
+        return (
+            np.logaddexp.reduce(self._logPK)
+            - np.log(len(self._kernels))
+            - self._logSumW
+        )
+
+    def evaluate(self, point) -> float:
+        """Log of the normalized density at a single point."""
+        return (
+            np.logaddexp.reduce([k.evaluate(point) for k in self._kernels])
+            - self._logSumW
         )

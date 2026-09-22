@@ -36,3 +36,14 @@ select = ["E", "F", "I", "UP", "B", "C4", "RUF"]
 [tool.ty.analysis]
 # OpenMM ships no type stubs, and the lint CI job installs it without conda.
 allowed-unresolved-imports = ["openmm", "openmm.**"]
+
+[[tool.ty.overrides]]
+# numpy-stubs gap, confirmed a false positive: np.logaddexp.reduce(array) is
+# ordinary numpy usage that runs correctly (see the passing test suite), but
+# the stub's reduce() overloads for binary ufuncs cannot be satisfied without
+# an explicit out= argument, so ty reports every plain reduce() call here as
+# having no matching overload.
+include = ["src/openmm_opes/kde.py", "tests/test_kde.py"]
+
+[tool.ty.overrides.rules]
+no-matching-overload = "ignore"
