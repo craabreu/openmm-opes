@@ -1,0 +1,11 @@
+name: openmm-opes
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - numpy>=1.24
+  - scipy>=1.10
+  - openmm>=8.1
+  - pytest>=7.4
+  - setuptools>=68
+  - pip
