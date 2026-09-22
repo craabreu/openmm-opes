@@ -3,7 +3,8 @@ name = "openmm-opes"
 version = "0.1.0"
 description = "OpenMM implementation of On-the-fly Probability Enhanced Sampling (OPES)"
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Charlles Abreu" }]
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.24", "scipy>=1.10", "openmm>=8.1"]
