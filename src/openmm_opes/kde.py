@@ -284,6 +284,21 @@ class OnlineKDE:
         return new
 
     def __iadd__(self, other):
+        # Combine the weight moments directly rather than letting _addKernel
+        # re-accumulate them from the merged kernels. Total weight survives
+        # that route (merging preserves it), but the sum of SQUARED weights
+        # does not: a compressed kernel carries the combined weight of every
+        # sample it absorbed, so squaring it far overstates the true sum and
+        # collapses the effective sample size, over-widening every kernel
+        # deposited afterwards.
+        #
+        # This is a deliberate divergence from the source implementation,
+        # whose compressed branch re-accumulates the same way (its
+        # uncompressed branch, dropped here, combines them correctly). The
+        # parity fixture only exercises single-KDE deposition, so it is
+        # unaffected; only multi-walker merging changes.
+        logSumW = np.logaddexp(self._logSumW, other._logSumW)
+        logSumWSq = np.logaddexp(self._logSumWSq, other._logSumWSq)
         for kernel in other._kernels:
             self._addKernel(
                 kernel.position,
@@ -292,6 +307,8 @@ class OnlineKDE:
                 kernel.numSamples,
                 adjustBandwidth=False,
             )
+        self._logSumW = logSumW
+        self._logSumWSq = logSumWSq
         return self
 
     @staticmethod

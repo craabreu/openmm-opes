@@ -200,3 +200,30 @@ def test_state_contains_only_arrays_and_scalars():
         assert isinstance(value, (np.ndarray, float, int)), key
         if isinstance(value, np.ndarray):
             assert value.dtype != object, key
+
+
+def test_iadd_combines_the_weight_moments_rather_than_re_accumulating():
+    """Regression for review finding 4.
+
+    A compressed kernel carries the combined weight of every sample it
+    absorbed. Re-deriving the sum of SQUARED weights from those merged
+    kernels badly overstates it, collapsing the effective sample size and
+    over-widening every kernel deposited afterwards.
+    """
+    space = makeSpace((-4.0, 4.0, 41, False))
+    first = OnlineKDE(space)
+    second = OnlineKDE(space)
+    rng = np.random.default_rng(1)
+    for _ in range(2000):
+        first.update(np.array([rng.normal()]), 0.0, np.array([0.04]))
+        second.update(np.array([rng.normal()]), 0.0, np.array([0.04]))
+
+    expectedLogSumW = np.logaddexp(first._logSumW, second._logSumW)
+    expectedLogSumWSq = np.logaddexp(first._logSumWSq, second._logSumWSq)
+    first += second
+
+    assert first._logSumW == pytest.approx(expectedLogSumW)
+    assert first._logSumWSq == pytest.approx(expectedLogSumWSq)
+    # 4000 unit-weight samples, so neff is 4000 and must not collapse
+    neff = np.exp(2 * first._logSumW - first._logSumWSq)
+    assert neff == pytest.approx(4000.0, rel=1e-6)

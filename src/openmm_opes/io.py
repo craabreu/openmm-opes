@@ -41,7 +41,11 @@ class BiasSharer:
         Directory shared by every walker.
     walkerId
         This walker's identifier. Drawn at random when omitted, from a fresh
-        generator so the global NumPy random state is left undisturbed.
+        generator so the global NumPy random state is left undisturbed. Pass a
+        stable value across restarts so a resumed walker reclaims its own file
+        slot: with a fresh random id every run, the previous run's file is
+        never overwritten and is read back forever as a phantom extra peer,
+        double-counting that walker's pre-restart kernels.
     """
 
     def __init__(self, biasDir: str, walkerId: int | None = None):
@@ -51,8 +55,21 @@ class BiasSharer:
             if walkerId is None
             else walkerId
         )
-        self._saveIndex = 0
         self._loaded: dict[int, _LoadedBias] = {}
+        # Resume past whatever this walker left behind, so save() overwrites
+        # its own previous file instead of orphaning it.
+        self._saveIndex = self._highestOwnIndex()
+
+    def _highestOwnIndex(self) -> int:
+        """Highest save index this walker already has on disk, or 0."""
+        if not os.path.isdir(self.biasDir):
+            return 0
+        indices = [
+            int(match.group(2))
+            for match in map(FILENAME_PATTERN.match, os.listdir(self.biasDir))
+            if match is not None and int(match.group(1)) == self.walkerId
+        ]
+        return max(indices, default=0)
 
     def _path(self, prefix: str, index: int) -> str:
         return os.path.join(self.biasDir, f"{prefix}_{self.walkerId}_{index}.npz")

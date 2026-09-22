@@ -368,6 +368,14 @@ Each gets a regression test named for the behavior it protects.
    and warning — this changes behavior only in the configuration that is currently
    broken, so the §8.3 parity test is unaffected.
 
+   **This fix was incomplete, and shipped broken in 0.1.0.** Skipping the deposition
+   left `_onInterval` calling `updateContext` unconditionally straight afterwards, so
+   the NaN reached the forces anyway by the other route. The accompanying test asserted
+   only that no kernel had been deposited, then checked the bias *after* a healthy
+   kernel had been added — it never looked at the bias during the broken window, so it
+   passed against code that still destroyed the trajectory. Corrected in 0.1.1: see
+   §7.8 finding 1.
+
 ### 7.5 What `biasWidth` means on the fixed-bandwidth path
 
 Throughout the implementation, `self._variance` holds the variance of the **sampled**
@@ -504,7 +512,53 @@ sampling schedule), must be a positive multiple of it, and must yield at least t
 samples; the docstring recommends substantially more. The §7.4.4 positive-variance guard
 still applies as a backstop.
 
-### 7.8 Style
+### 7.8 Post-release code review (fixed in 0.1.1)
+
+A code review run against the merged `src/openmm_opes` after 0.1.0 shipped found seven
+further defects. Each was independently reproduced before being accepted, and each fix
+carries a regression test that was confirmed to fail against the unfixed code — the
+discipline that was missing the first time, and the direct reason finding 1 escaped.
+
+1. **NaN bias still reached the forces** (HIGH). `addKernel` skipped the deposition, but
+   `_onInterval` then called `updateContext` regardless. Reproduced: with
+   `varianceFrequency == frequency` the particle is at `Vec3(nan, nan, nan)` by step
+   300. A freshly constructed sampler also returned NaN from `getBias()`. Fixed on both
+   fronts: `getBias` now returns the well-defined empty-estimate limit (the flat
+   `-barrier` floor the table is initialized to), and `addKernel` reports whether it
+   deposited so `_onInterval` only refreshes the context when the estimate changed.
+2. **`setState` silently reverted the KDE options** (HIGH). `_kdeFromState` built
+   `OnlineKDE(cvSpace)` with no kwargs, and the options were never retained. Reproduced:
+   a `kernelShape="compact", compressionThreshold=0.0` sampler restored as
+   `gaussian`/`1.0`, an immediate 8.19 kJ/mol bias discrepancy. Fixed by retaining the
+   options and funnelling every rebuild through one `_newKDE` factory.
+3. **`setState` never restored the `"self"` accumulators** that `getState` writes
+   (HIGH). Since `_syncWithDisk` rebuilds `total` from `self` plus peers, the restored
+   history was discarded at the next sync, and — worse — the walker republished an
+   *empty* state to `biasDir`, so its peers lost that history too. Verified by reading
+   the republished `.npz` back: `kde kernels = 0`.
+4. **`__iadd__` corrupted `_logSumWSq`** (MEDIUM). Re-deriving the sum of squared
+   weights from merged kernels overstates it badly, because a compressed kernel carries
+   the combined weight of everything it absorbed. Reproduced: merging two 2000-sample
+   KDEs gave `neff = 92.9` instead of 4000, making every subsequently deposited kernel
+   2.12x too wide. **This one is inherited, not introduced**: the source's compressed
+   branch does the same, while its uncompressed branch (dropped here) combines the
+   moments correctly. Fixing it is therefore a deliberate divergence from the source,
+   affecting multi-walker merging only; §8.3's fixture exercises single-KDE deposition
+   and is unaffected, which the passing parity test confirms.
+5. **`frequency` and `statsWindowSize` lacked positivity checks** (LOW), the same class
+   already guarded for `varianceFrequency`/`saveFrequency`. Both constructed fine and
+   then raised `ZeroDivisionError` mid-run.
+6. **`getFreeEnergy`'s docstring stated the wrong grid spacing** (LOW): it claimed
+   `(maxValue-minValue)/gridWidth` where the axis is built by
+   `np.linspace(minValue, maxValue, gridWidth)`, i.e. `/(gridWidth-1)`. Inherited from
+   `openmm.app.Metadynamics`' own docstring, but wrong either way.
+7. **A restarted walker could not reclaim its file slot** (LOW). `OPES` always built
+   `BiasSharer(biasDir)` with a fresh random id and no way to pass one, so the previous
+   run's file lingered and was read back forever as a phantom extra peer — compounding
+   with finding 3. Fixed by plumbing `walkerId` through the `OPES` constructor and
+   having `BiasSharer` resume past its own highest existing index.
+
+### 7.9 Style
 
 The camelCase API is kept throughout (`addKernel`, `getFreeEnergy`, `varianceFrequency`,
 …) to match OpenMM's own conventions, since users of `openmm.app` and of the

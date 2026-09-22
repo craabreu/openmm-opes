@@ -89,3 +89,37 @@ def test_saved_files_contain_no_pickled_objects(tmp_path):
     path = next(tmp_path.glob("kde_7_*.npz"))
     with np.load(path, allow_pickle=False) as data:
         assert set(data) == {"positions", "logSumW"}
+
+
+def test_a_restarted_walker_reclaims_its_own_file_slot(tmp_path):
+    """Regression for review finding 7.
+
+    A restart that draws a fresh index leaves the previous run's file on
+    disk, where every peer reads it back forever as an extra walker,
+    double-counting that walker's pre-restart kernels.
+    """
+    first = BiasSharer(str(tmp_path), walkerId=7)
+    first.save(makeState(1.0))
+    first.save(makeState(2.0))
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["kde_7_2.npz"]
+
+    # same walker comes back after a restart
+    resumed = BiasSharer(str(tmp_path), walkerId=7)
+    resumed.save(makeState(3.0))
+    files = sorted(p.name for p in tmp_path.iterdir())
+    assert files == ["kde_7_3.npz"], f"stale file left behind: {files}"
+
+
+def test_a_peer_does_not_see_a_restarted_walker_twice(tmp_path):
+    peer = BiasSharer(str(tmp_path), walkerId=1)
+    walker = BiasSharer(str(tmp_path), walkerId=2)
+    walker.save(makeState(5.0))
+    assert set(peer.load()) == {2}
+
+    restarted = BiasSharer(str(tmp_path), walkerId=2)
+    restarted.save(makeState(6.0))
+    # still exactly one peer, with the newer state -- not two
+    loaded = peer.load()
+    assert set(loaded) == {2}
+    assert loaded[2]["logSumW"] == pytest.approx(6.0)
+    assert len(list(tmp_path.glob("kde_*.npz"))) == 1

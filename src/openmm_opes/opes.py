@@ -93,6 +93,10 @@ class OPES:
         multiple of ``frequency``.
     biasDir: str, optional
         Directory shared with other walkers.
+    walkerId: int, optional
+        This walker's identifier within ``biasDir``. Random when omitted; pass
+        a stable value across restarts so a resumed walker reclaims its own
+        file rather than leaving the previous run's behind as a phantom peer.
     warmupSteps: int, optional
         When given, run this many steps without depositing kernels while
         measuring the CV variance, then freeze it. See the spec, section 7.7.
@@ -119,6 +123,7 @@ class OPES:
         bounded: bool = False,
         saveFrequency=None,
         biasDir=None,
+        walkerId=None,
         warmupSteps=None,
         compressionThreshold: float = 1.0,
         useExistingBandwidths: bool = True,
@@ -139,6 +144,7 @@ class OPES:
         self.bounded = bounded
         self.saveFrequency = saveFrequency
         self.biasDir = biasDir
+        self.walkerId = walkerId
         self.warmupSteps = warmupSteps
         self.statsWindowSize = statsWindowSize
 
@@ -162,15 +168,17 @@ class OPES:
 
         self._cvSpace = CVSpace(variables, bounded)
         self._cases = ("total",) + ("self",) * bool(saveFrequency)
-        kdeOptions = {
-            "compressionThreshold": compressionThreshold,
-            "useExistingBandwidths": useExistingBandwidths,
-            "kernelShape": kernelShape,
-        }
+        # Retained so every KDE this sampler rebuilds later -- in setState and
+        # in _syncWithDisk -- is configured identically. Rebuilding with the
+        # defaults silently reverted kernelShape/compressionThreshold on
+        # restore, changing the bias and every subsequent deposition.
+        self._compressionThreshold = compressionThreshold
+        self._useExistingBandwidths = useExistingBandwidths
+        self._kernelShape = kernelShape
         self._kde = {}
         for case in self._cases:
-            self._kde[case] = OnlineKDE(self._cvSpace, **kdeOptions)
-            self._kde[f"{case}.rw"] = OnlineKDE(self._cvSpace, **kdeOptions)
+            self._kde[case] = self._newKDE()
+            self._kde[f"{case}.rw"] = self._newKDE()
 
         self._adaptiveVariance = varianceFrequency is not None
         self._interval = varianceFrequency or frequency
@@ -187,7 +195,7 @@ class OPES:
                 biasFactor * np.array([v.biasWidth**2 for v in variables])
             )
 
-        self._sharer = BiasSharer(biasDir) if biasDir is not None else None
+        self._sharer = BiasSharer(biasDir, walkerId) if biasDir is not None else None
 
         gridWidths = [v.gridWidth for v in variables]
         self._widths = [] if d == 1 else gridWidths
@@ -217,6 +225,10 @@ class OPES:
     def _validate(
         self, d, biasFactor, numPeriodics, freeGroups, userSuppliedBiasFactor
     ):
+        if self.frequency <= 0:
+            raise ValueError("frequency must be positive")
+        if self.statsWindowSize <= 0:
+            raise ValueError("statsWindowSize must be positive")
         if self.varianceFrequency is not None and self.varianceFrequency <= 0:
             raise ValueError("varianceFrequency must be positive or None")
         if self.varianceFrequency and self.frequency % self.varianceFrequency != 0:
@@ -269,8 +281,17 @@ class OPES:
         return self._kde["total" if self.exploreMode else "total.rw"].getNumKernels()
 
     def getBias(self):
-        """The OPES bias potential on the grid."""
+        """The OPES bias potential on the grid.
+
+        With no kernels deposited yet the estimate is empty, and both the log
+        PDF and the log mean density are -inf, whose difference is NaN. The
+        bias is well defined in that limit, though: the regularization term
+        dominates, leaving the flat -barrier floor the tabulated function is
+        initialized to. Returning it explicitly keeps NaN out of the forces.
+        """
         kde = self._kde["total" if self.exploreMode else "total.rw"]
+        if kde.getNumKernels() == 0:
+            return self._prefactor * np.full(self._cvSpace.gridShape, self._logEpsilon)
         return self._prefactor * np.logaddexp(
             kde.getLogPDF() - kde.getLogMeanDensity(), self._logEpsilon
         )
@@ -279,9 +300,16 @@ class OPES:
         """Free energy as a function of the collective variables.
 
         Returned as an N-dimensional array in kJ/mole. The i'th position along
-        an axis corresponds to ``minValue + i*(maxValue-minValue)/gridWidth``.
-        Always the importance-sampling estimate, which converges better than
-        the direct one in explore mode.
+        an axis corresponds to
+        ``minValue + i*(maxValue-minValue)/(gridWidth-1)``, matching the
+        ``numpy.linspace(minValue, maxValue, gridWidth)`` axis the estimate is
+        built on. Always the importance-sampling estimate, which converges
+        better than the direct one in explore mode.
+
+        Every entry is NaN until the first kernel is deposited: with no
+        samples there is no density to take a logarithm of. Unlike
+        :meth:`getBias`, this has no defined limit to fall back on, and it
+        never reaches the forces.
         """
         return -self._kbt * self._kde["total.rw"].getLogPDF()
 
@@ -302,8 +330,12 @@ class OPES:
         )
         self._force.updateParametersInContext(context)
 
-    def addKernel(self, values, biasEnergy, variance=None) -> None:
+    def addKernel(self, values, biasEnergy, variance=None) -> bool:
         """Deposit a kernel into the probability estimates.
+
+        Returns whether a kernel was actually deposited: a non-positive
+        variance estimate is skipped rather than deposited, since a zero
+        bandwidth gives the kernel -inf log height and poisons the estimate.
 
         This does not refresh any Context; call :meth:`updateContext`
         afterwards if a simulation is running.
@@ -320,12 +352,13 @@ class OPES:
                 "or set warmupSteps.",
                 stacklevel=2,
             )
-            return
+            return False
         for case in self._cases:
             self._kde[case].update(values, 0.0, variance)
             self._kde[f"{case}.rw"].update(
                 values, biasEnergy / self._kbt, variance / self._biasFactor
             )
+        return True
 
     def _updateSampleStats(self, values) -> None:
         self._counter += 1
@@ -363,8 +396,17 @@ class OPES:
         state["var_total"] = variance["total"]
         return state
 
+    def _newKDE(self) -> OnlineKDE:
+        """An empty KDE carrying this sampler's configured options."""
+        return OnlineKDE(
+            self._cvSpace,
+            compressionThreshold=self._compressionThreshold,
+            useExistingBandwidths=self._useExistingBandwidths,
+            kernelShape=self._kernelShape,
+        )
+
     def _kdeFromState(self, state, prefix):
-        kde = OnlineKDE(self._cvSpace)
+        kde = self._newKDE()
         strip = len(prefix) + 1
         kde.setState(
             {
@@ -410,8 +452,10 @@ class OPES:
             energy = simulation.context.getState(
                 getEnergy=True, groups=groups
             ).getPotentialEnergy()
-            self.addKernel(position, energy)
-            self.updateContext(simulation.context)
+            # Only refresh the context when the estimate actually changed;
+            # a skipped deposition leaves the bias exactly as it was.
+            if self.addKernel(position, energy):
+                self.updateContext(simulation.context)
             if (
                 self.saveFrequency is not None
                 and simulation.currentStep % self.saveFrequency == 0
@@ -460,6 +504,16 @@ class OPES:
             {"num": state["totalVar_num"], "total": state["totalVar_total"]}
         )
         self._variance["total"] = average
+        # The own-contribution accumulators must come back too. _syncWithDisk
+        # rebuilds "total" from "self" plus peers, so leaving "self" empty
+        # threw the restored history away at the next sync and republished an
+        # empty state to the other walkers.
+        if "self" in self._cases and "kde_logWeights" in state:
+            for prefix, key in (("kde", "self"), ("kdeRW", "self.rw")):
+                self._kde[key] = self._kdeFromState(state, prefix)
+            own = RunningAverage(len(self.variables))
+            own.setState({"num": state["var_num"], "total": state["var_total"]})
+            self._variance["self"] = own
         self._warmupComplete = bool(float(state["warmupComplete"]))
         if self._warmupComplete and self.warmupSteps is not None:
             self._adaptiveVariance = False

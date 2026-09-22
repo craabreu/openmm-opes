@@ -6,7 +6,7 @@ import sys
 def test_package_imports_and_has_version():
     mod = importlib.import_module("openmm_opes")
     assert isinstance(mod.__version__, str)
-    assert mod.__version__ == "0.1.0"
+    assert mod.__version__ == "0.1.1"
 
 
 def test_kde_and_io_do_not_import_openmm():

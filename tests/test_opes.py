@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pytest
 
@@ -19,7 +21,8 @@ def makeSystemAndVariable(sigma=0.1, gridWidth=51):
 def makeOPES(**kwargs):
     system, variable = makeSystemAndVariable(kwargs.pop("sigma", 0.1))
     kwargs.setdefault("varianceFrequency", 10)
-    return OPES(system, [variable], 300.0, 20.0, 100, **kwargs)
+    frequency = kwargs.pop("frequency", 100)
+    return OPES(system, [variable], 300.0, 20.0, frequency, **kwargs)
 
 
 def test_running_average_copies_do_not_share_their_accumulator():
@@ -328,3 +331,150 @@ def test_warmup_state_round_trips_without_rescaling_twice():
     restored.setState(sampler.getState())
     assert restored._warmupComplete
     assert restored.getVariance() == pytest.approx(frozen)
+
+
+# --- Regression tests for the code-review findings -------------------------
+
+
+def test_fresh_sampler_bias_is_the_flat_barrier_floor_not_nan():
+    """Regression for review finding 1.
+
+    With no kernels the log PDF and log mean density are both -inf, and
+    their difference is NaN. getBias must return the well-defined limit --
+    the -barrier floor the tabulated function starts at -- because this
+    value is pushed straight into the forces.
+    """
+    sampler = makeOPES()
+    bias = sampler.getBias().value_in_unit(unit.kilojoules_per_mole)
+    assert sampler.getNumKernels() == 0
+    assert np.all(np.isfinite(bias))
+    assert bias == pytest.approx(np.full(51, -20.0))
+
+
+def test_skipped_deposition_never_pushes_nan_into_the_context():
+    """Regression for review finding 1, at the level it actually bit.
+
+    varianceFrequency == frequency leaves exactly one stats sample before
+    the first deposition, so the variance is 0 and the kernel is skipped.
+    The bias must stay finite and the trajectory must survive.
+    """
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 100)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        simulation = runSteps(sampler, system, 300)
+    position = simulation.context.getState(positions=True).getPositions()[0]
+    assert np.isfinite(position.x), "trajectory went NaN"
+    bias = sampler.getBias().value_in_unit(unit.kilojoules_per_mole)
+    assert np.all(np.isfinite(bias))
+
+
+def test_add_kernel_reports_whether_it_deposited():
+    sampler = makeOPES()
+    assert sampler.addKernel(
+        np.array([0.0]), 0.0 * unit.kilojoules_per_mole, variance=np.array([0.01])
+    )
+    with pytest.warns(UserWarning, match="variance"):
+        assert not sampler.addKernel(
+            np.array([0.0]), 0.0 * unit.kilojoules_per_mole, variance=np.array([0.0])
+        )
+
+
+def test_set_state_preserves_kernel_shape_and_compression_threshold():
+    """Regression for review finding 2: the rebuilt KDE used the defaults."""
+    sysA, varA = makeSystemAndVariable()
+    a = OPES(
+        sysA,
+        [varA],
+        300.0,
+        20.0,
+        100,
+        10,
+        kernelShape="compact",
+        compressionThreshold=0.0,
+    )
+    rng = np.random.default_rng(0)
+    for _ in range(20):
+        a.addKernel(
+            np.array([rng.uniform(-1, 1)]),
+            0.0 * unit.kilojoules_per_mole,
+            variance=np.array([0.01]),
+        )
+
+    sysB, varB = makeSystemAndVariable()
+    b = OPES(
+        sysB,
+        [varB],
+        300.0,
+        20.0,
+        100,
+        10,
+        kernelShape="compact",
+        compressionThreshold=0.0,
+    )
+    b.setState(a.getState())
+
+    restored = b._kde["total"]
+    assert restored._shape.name == "compact"
+    assert restored._compressionThreshold == 0.0
+    assert b.getBias().value_in_unit(unit.kilojoules_per_mole) == pytest.approx(
+        a.getBias().value_in_unit(unit.kilojoules_per_mole)
+    )
+
+
+def test_set_state_restores_the_own_contribution_accumulators(tmp_path):
+    """Regression for review finding 3.
+
+    _syncWithDisk rebuilds "total" from "self" plus peers, so an unrestored
+    "self" threw away the restored history and republished an empty state
+    to the other walkers.
+    """
+    system, variable = makeHarmonicSystem()
+    a = OPES(
+        system,
+        [variable],
+        300.0,
+        20.0,
+        100,
+        10,
+        saveFrequency=100,
+        biasDir=str(tmp_path),
+    )
+    runSteps(a, system, 2000)
+    assert a._kde["self"].getNumKernels() > 0
+
+    system2, variable2 = makeHarmonicSystem()
+    b = OPES(
+        system2,
+        [variable2],
+        300.0,
+        20.0,
+        100,
+        10,
+        saveFrequency=100,
+        biasDir=str(tmp_path),
+    )
+    b.setState(a.getState())
+    assert b._kde["self"].getNumKernels() == a._kde["self"].getNumKernels()
+    assert b._kde["self.rw"].getNumKernels() == a._kde["self.rw"].getNumKernels()
+    assert b._variance["self"].get() == pytest.approx(a._variance["self"].get())
+
+
+def test_frequency_and_stats_window_size_must_be_positive():
+    """Regression for review finding 5: both reached a ZeroDivisionError."""
+    with pytest.raises(ValueError, match="frequency must be positive"):
+        makeOPES(frequency=0)
+    with pytest.raises(ValueError, match="statsWindowSize must be positive"):
+        makeOPES(statsWindowSize=0)
+
+
+def test_free_energy_docstring_grid_spacing_matches_the_actual_axis():
+    """Regression for review finding 6: the docstring stated the wrong axis."""
+    sampler = makeOPES()
+    fes = sampler.getFreeEnergy()
+    gridWidth = 51
+    assert len(fes) == gridWidth
+    documented = np.linspace(-2.0, 2.0, gridWidth)
+    spacing = (2.0 - -2.0) / (gridWidth - 1)
+    assert documented[1] - documented[0] == pytest.approx(spacing)
+    assert "gridWidth-1" in OPES.getFreeEnergy.__doc__
