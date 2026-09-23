@@ -596,3 +596,26 @@ def test_a_sync_does_not_resize_the_walkers_own_kernels(tmp_path):
     for key, bandwidths in before.items():
         after = [k.bandwidth for k in a._kde[key]._kernels[20:25]]
         assert np.concatenate(after) == pytest.approx(np.concatenate(bandwidths))
+
+
+def test_adaptive_variance_waits_one_stats_window_before_the_first_kernel():
+    """Regression: the first kernel went down after a single deposition stride.
+
+    With frequency=100 and varianceFrequency=10 that sized it from ten
+    correlated samples, the first of which always contributes zero, and
+    compression kept the resulting too-narrow kernels. The first deposition
+    now waits for statsWindowSize strides (tau = 100 samples, 1000 steps).
+    """
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10)
+    runSteps(sampler, system, 900)
+    assert sampler.getNumKernels() == 0
+    runSteps(sampler, system, 100)
+    assert sampler.getNumKernels() == 1
+
+
+def test_the_first_kernel_wait_does_not_apply_to_a_fixed_bandwidth():
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, None)
+    runSteps(sampler, system, 100)
+    assert sampler.getNumKernels() == 1

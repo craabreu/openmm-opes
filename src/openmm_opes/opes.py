@@ -107,7 +107,9 @@ class OPES:
     kernelShape: str
         ``"gaussian"`` or ``"compact"``.
     statsWindowSize: int
-        Window, in deposition strides, of the running CV-mean estimate.
+        Window, in deposition strides, of the running CV-mean estimate. With
+        an adaptive variance, the first kernel also waits this many strides,
+        so that it is sized from a measured variance.
     """
 
     def __init__(
@@ -474,6 +476,13 @@ class OPES:
             return
         if self._adaptiveVariance:
             self._updateSampleStats(position)
+            # Hold the first kernel until a full stats window of variance
+            # samples is in: after a single stride the estimate rests on a
+            # few correlated samples, and the too-narrow kernels it yields
+            # survive compression. An estimate holding kernels (restored,
+            # or loaded from peers) is past this point.
+            if self._counter < self._tau and not self._kde["total"]:
+                return
         if simulation.currentStep % self.frequency == 0:
             groups = {self._force.getForceGroup()}
             energy = simulation.context.getState(
