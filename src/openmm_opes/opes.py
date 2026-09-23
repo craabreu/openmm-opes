@@ -107,7 +107,9 @@ class OPES:
     kernelShape: str
         ``"gaussian"`` or ``"compact"``.
     statsWindowSize: int
-        Window, in deposition strides, of the running CV-mean estimate.
+        Window, in deposition strides, of the running CV-mean estimate. With
+        an adaptive variance, the first kernel also waits this many strides,
+        so that it is sized from a measured variance.
     """
 
     def __init__(
@@ -389,13 +391,17 @@ class OPES:
         for case in self._cases:
             self._variance[case].update(sqdev)
 
-    def _syncWithDisk(self) -> None:
+    def _syncWithDisk(self) -> bool:
+        """Publish this walker's state and fold in peers' newer ones.
+
+        Returns whether "total" was rebuilt, i.e. whether the bias changed.
+        """
         # Only ever called when saveFrequency is set, which _validate ties to
         # biasDir being set, which is what constructs self._sharer.
         assert self._sharer is not None
         self._sharer.save(self._getSharedState())
         if not self._sharer.load():
-            return
+            return False
         self._kde["total"] = copy(self._kde["self"])
         self._kde["total.rw"] = copy(self._kde["self.rw"])
         self._variance["total"] = self._variance["self"].copy()
@@ -405,6 +411,7 @@ class OPES:
             peer = RunningAverage(len(self.variables))
             peer.setState({"num": state["var_num"], "total": state["var_total"]})
             self._variance["total"] += peer
+        return True
 
     def _getSharedState(self) -> dict:
         state = {}
@@ -474,20 +481,29 @@ class OPES:
             return
         if self._adaptiveVariance:
             self._updateSampleStats(position)
+            # Hold the first kernel until a full stats window of variance
+            # samples is in: after a single stride the estimate rests on a
+            # few correlated samples, and the too-narrow kernels it yields
+            # survive compression. An estimate holding kernels (restored,
+            # or loaded from peers) is past this point.
+            if self._counter < self._tau and not self._kde["total"]:
+                return
         if simulation.currentStep % self.frequency == 0:
             groups = {self._force.getForceGroup()}
             energy = simulation.context.getState(
                 getEnergy=True, groups=groups
             ).getPotentialEnergy()
-            # Only refresh the context when the estimate actually changed;
-            # a skipped deposition leaves the bias exactly as it was.
-            if self.addKernel(position, energy):
-                self.updateContext(simulation.context)
+            changed = self.addKernel(position, energy)
             if (
                 self.saveFrequency is not None
                 and simulation.currentStep % self.saveFrequency == 0
             ):
-                self._syncWithDisk()
+                changed = self._syncWithDisk() or changed
+            # Refreshed once, after the sync, so kernels loaded from peers
+            # reach the forces now rather than at the next deposition. A
+            # skipped deposition with nothing loaded leaves the bias as it was.
+            if changed:
+                self.updateContext(simulation.context)
 
     def _finishWarmup(self) -> None:
         """Freeze sigma^(0) measured from the unbiased warm-up segment.

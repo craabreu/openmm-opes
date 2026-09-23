@@ -596,3 +596,59 @@ def test_a_sync_does_not_resize_the_walkers_own_kernels(tmp_path):
     for key, bandwidths in before.items():
         after = [k.bandwidth for k in a._kde[key]._kernels[20:25]]
         assert np.concatenate(after) == pytest.approx(np.concatenate(bandwidths))
+
+
+def test_adaptive_variance_waits_one_stats_window_before_the_first_kernel():
+    """Regression: the first kernel went down after a single deposition stride.
+
+    With frequency=100 and varianceFrequency=10 that sized it from ten
+    correlated samples, the first of which always contributes zero, and
+    compression kept the resulting too-narrow kernels. The first deposition
+    now waits for statsWindowSize strides (tau = 100 samples, 1000 steps).
+    """
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10)
+    runSteps(sampler, system, 900)
+    assert sampler.getNumKernels() == 0
+    runSteps(sampler, system, 100)
+    assert sampler.getNumKernels() == 1
+
+
+def test_the_first_kernel_wait_does_not_apply_to_a_fixed_bandwidth():
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, None)
+    runSteps(sampler, system, 100)
+    assert sampler.getNumKernels() == 1
+
+
+def test_a_sync_that_loads_peer_kernels_refreshes_the_context(tmp_path):
+    """Regression: the context was refreshed before the sync, not after.
+
+    Kernels loaded from peers only reached the forces at the next
+    deposition, one frequency later.
+    """
+
+    def walker(walkerId):
+        system, variable = makeHarmonicSystem()
+        sampler = OPES(
+            system,
+            [variable],
+            300.0,
+            20.0,
+            100,
+            None,
+            saveFrequency=100,
+            biasDir=str(tmp_path),
+            walkerId=walkerId,
+        )
+        return sampler, system
+
+    b, _ = walker(2)
+    b.addKernel([0.5], 0.0)
+    b._syncWithDisk()
+    a, system = walker(1)
+    runSteps(a, system, 100)
+    assert a._kde["total"].getNumKernels() == 2
+    tabulated = np.array(a._force.getTabulatedFunction(0).getFunctionParameters()[0])
+    bias = a.getBias().value_in_unit(unit.kilojoules_per_mole)
+    assert tabulated == pytest.approx(bias.ravel())
