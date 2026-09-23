@@ -186,11 +186,19 @@ def test_two_walkers_share_their_kernels(tmp_path):
     for index, (sampler, system) in enumerate(zip(samplers, systems, strict=True)):
         runSampler(sampler, system, 20, 500, seed=1000 * (index + 1))
 
-    # the second walker synced after the first had already written kernels
-    assert (
-        samplers[1]._kde["total"].getNumKernels()
-        > samplers[1]._kde["self"].getNumKernels()
-    )
+    # The second walker synced after the first had written its final state, so
+    # its shared estimates hold every sample of both walkers. Counted in
+    # samples, not kernels: compression merges overlapping peer kernels into
+    # the walker's own, so the kernel count can even drop when sharing works.
+    def numSamples(kde):
+        return sum(kernel.numSamples for kernel in kde._kernels)
+
+    first, second = samplers
+    for total, own in (("total", "self"), ("total.rw", "self.rw")):
+        assert numSamples(second._kde[total]) == numSamples(
+            second._kde[own]
+        ) + numSamples(first._kde[own])
+        assert numSamples(first._kde[own]) > 0
 
 
 def test_multiwalker_sync_does_not_corrupt_the_walkers_own_variance(tmp_path):
