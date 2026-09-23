@@ -76,3 +76,11 @@ sampler = OPES(..., varianceFrequency=50, warmupSteps=50_000)
 
 Nothing is deposited during the first 50,000 steps; the CV variance measured
 there becomes the initial bandwidth and is then held fixed.
+
+To fix the bandwidth yourself instead, pass `varianceFrequency=None` and set
+each variable's `biasWidth`. It is read as $\sigma^{(0)}$, the standard
+deviation of the **unbiased** distribution, in both modes. OPES-explore
+kernels estimate the sampled distribution, which is $\sqrt{\gamma}$ times
+wider, so they are deposited $\sqrt{\gamma}$ times wider than `biasWidth`.
+This is the same convention as PLUMED's `SIGMA` keyword, so a PLUMED value
+carries over unchanged.

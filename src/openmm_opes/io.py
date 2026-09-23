@@ -18,6 +18,10 @@ import warnings
 
 import numpy as np
 
+# Applied with fullmatch: match() would also accept names that merely start
+# like a bias file, such as a backup "kde_1_2.npz.bak".
+# Always applied with fullmatch: match() also accepted names that merely start
+# like a bias file, such as a backup "kde_1_2.npz.bak".
 FILENAME_PATTERN = re.compile(r"kde_(\d+)_(\d+)\.npz")
 
 
@@ -66,7 +70,7 @@ class BiasSharer:
             return 0
         indices = [
             int(match.group(2))
-            for match in map(FILENAME_PATTERN.match, os.listdir(self.biasDir))
+            for match in map(FILENAME_PATTERN.fullmatch, os.listdir(self.biasDir))
             if match is not None and int(match.group(1)) == self.walkerId
         ]
         return max(indices, default=0)
@@ -90,7 +94,7 @@ class BiasSharer:
         """Return peer states that are new or have advanced since the last call."""
         updated: dict[int, dict] = {}
         for filename in os.listdir(self.biasDir):
-            match = FILENAME_PATTERN.match(filename)
+            match = FILENAME_PATTERN.fullmatch(filename)
             if match is None:
                 continue
             walkerId, index = int(match.group(1)), int(match.group(2))

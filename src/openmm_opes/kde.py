@@ -478,12 +478,18 @@ class OnlineKDE:
             return self._logPG - self._logSumW
 
     def getLogMeanDensity(self) -> float:
-        """Log of Z_n, the mean density over the compressed kernel centers."""
-        return (
-            np.logaddexp.reduce(self._logPK)
-            - np.log(len(self._kernels))
-            - self._logSumW
-        )
+        """Log of Z_n, the mean density over the compressed kernel centers.
+
+        NaN with no kernels deposited yet, for the same reason as
+        :meth:`getLogPDF`: the mean over an empty set is undefined, so the
+        log(0) and inf - inf along the way are expected, not warned about.
+        """
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return (
+                np.logaddexp.reduce(self._logPK)
+                - np.log(len(self._kernels))
+                - self._logSumW
+            )
 
     def evaluate(self, point) -> float:
         """Log of the normalized density at a single point."""

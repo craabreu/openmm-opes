@@ -130,3 +130,19 @@ def test_save_creates_a_missing_bias_directory(tmp_path):
     sharer = BiasSharer(str(biasDir), walkerId=7)
     sharer.save(makeState(1.0))
     assert sorted(p.name for p in biasDir.iterdir()) == ["kde_7_1.npz"]
+
+
+def test_load_ignores_names_that_only_start_like_a_bias_file(tmp_path):
+    """Regression: the pattern was only anchored at the start of the name."""
+    peer = BiasSharer(str(tmp_path), walkerId=2)
+    peer.save(makeState(1.0))
+    (tmp_path / "kde_2_1.npz").rename(tmp_path / "kde_2_1.npz.bak")
+    mine = BiasSharer(str(tmp_path), walkerId=1)
+    assert mine.load() == {}
+
+
+def test_a_stray_lookalike_file_does_not_advance_the_save_index(tmp_path):
+    (tmp_path / "kde_7_9.npz.bak").touch()
+    sharer = BiasSharer(str(tmp_path), walkerId=7)
+    sharer.save(makeState(1.0))
+    assert (tmp_path / "kde_7_1.npz").exists()

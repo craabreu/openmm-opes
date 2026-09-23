@@ -48,7 +48,10 @@ V_n(\mathbf{s}) = (\gamma-1)\frac{1}{\beta}
 \log\left(\frac{p^{\text{WT}}_n(\mathbf{s})}{Z_n} + \epsilon\right)$$
 
 It explores faster and converges more slowly. `getBias()` reads the unweighted
-estimate in explore mode and the reweighted one otherwise.
+estimate in explore mode and the reweighted one otherwise. Because
+$p^{\text{WT}}$ is about $\sqrt{\gamma}$ times wider than $P$, explore kernels
+start at $\sqrt{\gamma}\,\sigma^{(0)}$, with a fixed `biasWidth` still read as
+the unbiased $\sigma^{(0)}$.
 
 ## Free energy
 
