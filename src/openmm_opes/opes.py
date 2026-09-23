@@ -365,10 +365,18 @@ class OPES:
                 stacklevel=2,
             )
             return False
+        logWeight = biasEnergy / self._kbt
+        # Sized once, by the shared "total" estimates, and deposited
+        # identically into "self". _syncWithDisk rebuilds "total" from every
+        # walker's "self", so sizing "self" by the walker's own sample size
+        # widened every kernel by numWalkers^(1/(d+4)) and made the bias
+        # jump at each sync.
+        factor = self._kde["total"].bandwidthFactor(0.0)
+        factorRW = self._kde["total.rw"].bandwidthFactor(logWeight)
         for case in self._cases:
-            self._kde[case].update(values, 0.0, variance)
+            self._kde[case].update(values, 0.0, variance, factor)
             self._kde[f"{case}.rw"].update(
-                values, biasEnergy / self._kbt, variance / self._biasFactor
+                values, logWeight, variance / self._biasFactor, factorRW
             )
         return True
 

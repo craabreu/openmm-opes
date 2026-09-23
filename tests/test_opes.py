@@ -548,3 +548,51 @@ def test_average_density_of_an_empty_estimate_is_nan_without_warnings():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         assert np.isnan(sampler.getAverageDensity())
+
+
+def test_a_sync_does_not_resize_the_walkers_own_kernels(tmp_path):
+    """Regression: each walker sized kernels by its OWN effective sample size.
+
+    Kernels deposited between syncs went into "total" sized by the shared
+    sample size, but "self" got a wider copy sized by the walker's own. The
+    next sync rebuilt "total" from "self", so the bias jumped at every sync
+    and the shared estimate ended up wider by numWalkers^(1/(d+4)).
+    """
+
+    def walker(walkerId):
+        system, variable = makeSystemAndVariable()
+        return OPES(
+            system,
+            [variable],
+            300.0,
+            20.0,
+            100,
+            None,
+            saveFrequency=100,
+            biasDir=str(tmp_path),
+            walkerId=walkerId,
+            compressionThreshold=0.0,
+        )
+
+    rng = np.random.default_rng(0)
+
+    def deposit(sampler, n):
+        for _ in range(n):
+            sampler.addKernel([rng.normal()], rng.normal())
+
+    a, b = walker(1), walker(2)
+    deposit(b, 20)
+    b._syncWithDisk()
+    deposit(a, 20)
+    a._syncWithDisk()  # a's total now holds a's 20 kernels, then b's 20
+    deposit(a, 5)
+    before = {
+        key: [k.bandwidth.copy() for k in a._kde[key]._kernels[-5:]]
+        for key in ("total", "total.rw")
+    }
+    deposit(b, 1)
+    b._syncWithDisk()
+    a._syncWithDisk()  # b advanced, so this rebuilds a's total: a's 25 first
+    for key, bandwidths in before.items():
+        after = [k.bandwidth for k in a._kde[key]._kernels[20:25]]
+        assert np.concatenate(after) == pytest.approx(np.concatenate(bandwidths))
