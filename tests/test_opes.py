@@ -528,3 +528,23 @@ def test_add_kernel_accepts_a_plain_list_variance():
     sampler = makeOPES()
     assert sampler.addKernel([0.0], 0.0, variance=[0.01])
     assert sampler.getNumKernels() == 1
+
+
+@pytest.mark.parametrize("barrier", [0.0, -20.0])
+def test_non_positive_barrier_is_rejected_even_with_an_explicit_bias_factor(barrier):
+    """Regression: with biasFactor given, a barrier <= 0 slipped through.
+
+    That makes log(epsilon) = -barrier/prefactor >= 0, i.e. epsilon >= 1,
+    which swamps P/Z and leaves the bias meaningless.
+    """
+    system, variable = makeSystemAndVariable()
+    with pytest.raises(ValueError, match="barrier must be positive"):
+        OPES(system, [variable], 300.0, barrier, 100, 10, biasFactor=5.0)
+
+
+def test_average_density_of_an_empty_estimate_is_nan_without_warnings():
+    """Regression: log(0) on the empty kernel list raised RuntimeWarnings."""
+    sampler = makeOPES()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert np.isnan(sampler.getAverageDensity())

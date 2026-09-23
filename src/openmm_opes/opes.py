@@ -251,6 +251,11 @@ class OPES:
                 raise ValueError(
                     "warmupSteps must span at least two varianceFrequency intervals"
                 )
+        # Checked on its own: with an explicit biasFactor, the barrier / kT
+        # test below never sees the barrier, and a non-positive one gives
+        # epsilon >= 1, which swamps P/Z and flattens the bias.
+        if self.barrier <= 0 * unit.kilojoules_per_mole:
+            raise ValueError("barrier must be positive")
         if biasFactor <= 1.0:
             raise ValueError(
                 "biasFactor must be greater than 1"
@@ -314,7 +319,10 @@ class OPES:
         return -self._kbt * self._kde["total.rw"].getLogPDF()
 
     def getAverageDensity(self):
-        """Z_n, the mean density over the explored CV space."""
+        """Z_n, the mean density over the explored CV space.
+
+        NaN until the first kernel is deposited, like :meth:`getFreeEnergy`.
+        """
         kde = self._kde["total" if self.exploreMode else "total.rw"]
         return np.exp(kde.getLogMeanDensity())
 
