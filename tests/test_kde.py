@@ -250,10 +250,13 @@ def reflectedDensity(kde, point):
             zip(kernel.bandwidth, kernel.position, strict=True)
         ):
             images = (point[i], 2 * lower[i] - point[i], 2 * upper[i] - point[i])
-            product *= sum(
-                np.exp(-0.5 * ((x - center) / sigma) ** 2) / np.sqrt(2 * np.pi)
-                for x in images
-            ) / sigma
+            product *= (
+                sum(
+                    np.exp(-0.5 * ((x - center) / sigma) ** 2) / np.sqrt(2 * np.pi)
+                    for x in images
+                )
+                / sigma
+            )
         total += product
     return total
 
