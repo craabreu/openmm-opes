@@ -438,12 +438,10 @@ class OnlineKDE:
     def _addKernel(
         self, position, bandwidth, logWeight, numSamples=1, adjustBandwidth=True
     ):
+        if adjustBandwidth:
+            bandwidth = bandwidth * self.bandwidthFactor(logWeight)
         self._logSumW = np.logaddexp(self._logSumW, logWeight)
         self._logSumWSq = np.logaddexp(self._logSumWSq, 2 * logWeight)
-        if adjustBandwidth:
-            neff = np.exp(2 * self._logSumW - self._logSumWSq)
-            silverman = (neff * (self._d + 2) / 4) ** (-1 / (self._d + 4))
-            bandwidth = bandwidth * silverman
         newKernel = Kernel(
             self._cvSpace, position, bandwidth, logWeight, numSamples, self._shape
         )
@@ -458,9 +456,31 @@ class OnlineKDE:
             # a kernel has no images (unbounded, or far from every wall).
             self._logPK = np.array([newKernel.evaluate(newKernel.position)])
 
-    def update(self, position, logWeight, variance) -> None:
-        """Deposit a kernel of the given log weight and per-CV variance."""
-        self._addKernel(position, np.sqrt(variance), logWeight)
+    def bandwidthFactor(self, logWeight) -> float:
+        """Silverman shrink factor for a new kernel of the given log weight.
+
+        Computed from this estimate's effective sample size with the new
+        kernel's weight already counted, which is what :meth:`update` applies.
+        """
+        logSumW = np.logaddexp(self._logSumW, logWeight)
+        logSumWSq = np.logaddexp(self._logSumWSq, 2 * logWeight)
+        neff = np.exp(2 * logSumW - logSumWSq)
+        return (neff * (self._d + 2) / 4) ** (-1 / (self._d + 4))
+
+    def update(self, position, logWeight, variance, factor=None) -> None:
+        """Deposit a kernel of the given log weight and per-CV variance.
+
+        The bandwidth is shrunk by ``factor`` when given, and otherwise by
+        this estimate's own :meth:`bandwidthFactor`. Passing one lets an
+        estimate that is part of a larger one size kernels by the larger
+        one's sample size.
+        """
+        if factor is None:
+            self._addKernel(position, np.sqrt(variance), logWeight)
+        else:
+            self._addKernel(
+                position, np.sqrt(variance) * factor, logWeight, adjustBandwidth=False
+            )
 
     def getNumKernels(self) -> int:
         """Number of compressed kernels currently stored."""
