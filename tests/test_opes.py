@@ -343,8 +343,8 @@ def test_fresh_sampler_bias_is_the_flat_barrier_floor_not_nan():
 
     With no kernels the log PDF and log mean density are both -inf, and
     their difference is NaN. getBias must return the well-defined limit --
-    the -barrier floor the tabulated function starts at -- because this
-    value is pushed straight into the forces.
+    the flat -barrier floor -- because this value is pushed straight into
+    the forces.
     """
     sampler = makeOPES()
     bias = sampler.getBias().value_in_unit(unit.kilojoules_per_mole)
@@ -650,5 +650,45 @@ def test_a_sync_that_loads_peer_kernels_refreshes_the_context(tmp_path):
     runSteps(a, system, 100)
     assert a._kde["total"].getNumKernels() == 2
     tabulated = np.array(a._force.getTabulatedFunction(0).getFunctionParameters()[0])
-    bias = a.getBias().value_in_unit(unit.kilojoules_per_mole)
+    # the table stores V + barrier (see OPES.updateContext)
+    bias = (a.getBias() + a.barrier).value_in_unit(unit.kilojoules_per_mole)
     assert tabulated == pytest.approx(bias.ravel())
+
+
+def test_a_cv_outside_the_grid_sees_the_unexplored_floor():
+    """Regression: outside [minValue, maxValue] the bias jumped by +barrier.
+
+    OpenMM's tabulated functions are zero outside their range, while the
+    table used to hold V itself, whose unexplored floor is -barrier. The
+    table now holds V + barrier, so outside the grid a CV sees exactly the
+    bias of a region nothing has been deposited in.
+    """
+    system, variable = makeHarmonicSystem()  # grid over [-1, 1]
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, None)
+    simulation = runSteps(sampler, system, 1000)
+    assert sampler.getNumKernels() > 0
+    context = simulation.context
+    group = {sampler._force.getForceGroup()}
+
+    def biasEnergyAt(x):
+        context.setPositions([openmm.Vec3(x, 0, 0)])
+        state = context.getState(getEnergy=True, groups=group)
+        return state.getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
+
+    unexplored = biasEnergyAt(0.99)  # the harmonic well never reaches it
+    assert biasEnergyAt(1.5) == pytest.approx(unexplored, abs=1e-6)
+    assert biasEnergyAt(-1.5) == pytest.approx(unexplored, abs=1e-6)
+
+
+def test_deposition_weights_use_the_unshifted_bias():
+    """The table's +barrier offset must not leak into the reweighting.
+
+    The first kernel is deposited on the flat floor, V = -barrier, so its
+    reweighted log weight is -barrier/kT, whatever the table stores.
+    """
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, None)
+    runSteps(sampler, system, 100)
+    (kernel,) = sampler._kde["total.rw"]._kernels
+    kT = sampler._kbt.value_in_unit(unit.kilojoules_per_mole)
+    assert kernel.logWeight == pytest.approx(-20.0 / kT)

@@ -203,7 +203,8 @@ class OPES:
         self._widths = [] if d == 1 else gridWidths
         self._limits = [limit for v in variables for limit in (v.minValue, v.maxValue)]
         periodic = numPeriodics == d
-        initial = np.full(int(np.prod(gridWidths)), -barrier / unit.kilojoules_per_mole)
+        # The table holds V + barrier, not V: see updateContext.
+        initial = np.zeros(int(np.prod(gridWidths)))
 
         energyFunction = "table(" + ",".join(f"cv{i}" for i in range(d)) + ")"
         self._force = mm.CustomCVForce(energyFunction)
@@ -293,8 +294,8 @@ class OPES:
         With no kernels deposited yet the estimate is empty, and both the log
         PDF and the log mean density are -inf, whose difference is NaN. The
         bias is well defined in that limit, though: the regularization term
-        dominates, leaving the flat -barrier floor the tabulated function is
-        initialized to. Returning it explicitly keeps NaN out of the forces.
+        dominates, leaving the flat -barrier floor. Returning it explicitly
+        keeps NaN out of the forces.
         """
         kde = self._kde["total" if self.exploreMode else "total.rw"]
         if kde.getNumKernels() == 0:
@@ -333,8 +334,15 @@ class OPES:
         return self._force.getCollectiveVariableValues(simulation.context)
 
     def updateContext(self, context) -> None:
-        """Push the current bias into a Context."""
-        bias = self.getBias().value_in_unit(unit.kilojoules_per_mole)
+        """Push the current bias into a Context.
+
+        The table stores V + barrier, so the energy the force contributes is
+        the bias shifted up by ``barrier``: the unexplored floor sits at 0.
+        OpenMM's tabulated functions are zero outside their range, so a CV
+        that leaves ``[minValue, maxValue]`` sees the bias of a region
+        nothing has been deposited in, rather than a jump of ``barrier``.
+        """
+        bias = (self.getBias() + self.barrier).value_in_unit(unit.kilojoules_per_mole)
         self._force.getTabulatedFunction(0).setFunctionParameters(
             *self._widths, bias.ravel(), *self._limits
         )
@@ -490,9 +498,15 @@ class OPES:
                 return
         if simulation.currentStep % self.frequency == 0:
             groups = {self._force.getForceGroup()}
-            energy = simulation.context.getState(
-                getEnergy=True, groups=groups
-            ).getPotentialEnergy()
+            # Undo the table's +barrier offset (see updateContext): the
+            # reweighting needs V itself, or kernels restored from a state
+            # saved before the offset would be off by exp(barrier/kT).
+            energy = (
+                simulation.context.getState(
+                    getEnergy=True, groups=groups
+                ).getPotentialEnergy()
+                - self.barrier
+            )
             changed = self.addKernel(position, energy)
             if (
                 self.saveFrequency is not None
