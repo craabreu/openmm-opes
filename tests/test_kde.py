@@ -227,3 +227,109 @@ def test_iadd_combines_the_weight_moments_rather_than_re_accumulating():
     # 4000 unit-weight samples, so neff is 4000 and must not collapse
     neff = np.exp(2 * first._logSumW - first._logSumWSq)
     assert neff == pytest.approx(4000.0, rel=1e-6)
+
+
+# --- Regression tests for the second code review ---------------------------
+
+
+def reflectedDensity(kde, point):
+    """Normalized mixture density at ``point``, summing every mirror image.
+
+    Reflecting the evaluation point across each wall is equivalent to
+    reflecting the kernel, and a diagonal kernel factorizes per dimension, so
+    the reflected kernel is a product of three-image sums.
+    """
+    space = kde._cvSpace
+    lower = np.array([cv.minValue for cv in space.variables])
+    upper = np.array([cv.maxValue for cv in space.variables])
+    point = np.asarray(point, dtype=float)
+    total = 0.0
+    for kernel in kde._kernels:
+        product = np.exp(kernel.logWeight - kde._logSumW)
+        for i, (sigma, center) in enumerate(
+            zip(kernel.bandwidth, kernel.position, strict=True)
+        ):
+            images = (point[i], 2 * lower[i] - point[i], 2 * upper[i] - point[i])
+            product *= sum(
+                np.exp(-0.5 * ((x - center) / sigma) ** 2) / np.sqrt(2 * np.pi)
+                for x in images
+            ) / sigma
+        total += product
+    return total
+
+
+def test_bounded_density_at_the_wall_includes_the_mirror_image():
+    """The wall node lost its mirror image, halving the density right there.
+
+    Reflection doubles a kernel's value at the wall itself, since the kernel
+    and its image coincide. Dropping that image left a sharp dip at the
+    boundary node, which went straight into the tabulated bias.
+    """
+    space = makeSpace((0.0, 1.0, 11, False), bounded=True)
+    kde = OnlineKDE(space, compressionThreshold=0.0)
+    kde.update(np.array([0.0]), 0.0, np.array([0.04]))
+    grid = np.linspace(0.0, 1.0, 11)
+    expected = [reflectedDensity(kde, [x]) for x in grid]
+    assert np.exp(kde.getLogPDF()) == pytest.approx(expected, rel=1e-12)
+
+
+@pytest.mark.parametrize(
+    "specs",
+    [
+        ((0.0, 1.0, 11, False),),
+        ((0.0, 1.0, 11, False), (-1.0, 1.0, 21, False)),
+    ],
+)
+def test_bounded_point_density_agrees_with_the_grid(specs):
+    """Z_n must use the same reflected density the grid holds.
+
+    Point evaluation ignored the walls while the grid folded them in, so the
+    mean density at the kernel centers normalized a different estimate from
+    the one the bias is built on.
+    """
+    space = makeSpace(*specs, bounded=True)
+    kde = OnlineKDE(space, compressionThreshold=0.0)
+    grids = [np.linspace(a, b, n) for a, b, n, _ in specs]
+    rng = np.random.default_rng(11)
+    nodes = []
+    for _ in range(6):
+        # centers sit on grid nodes, near the walls, so grid and point values
+        # can be compared directly where reflection matters most
+        index = tuple(int(rng.choice([0, 1, len(g) - 2, len(g) - 1])) for g in grids)
+        nodes.append(index)
+        position = np.array([g[i] for g, i in zip(grids, index, strict=True)])
+        kde.update(position, rng.normal(), np.full(len(specs), 0.02))
+
+    logPDF = kde.getLogPDF()
+    for kernel, index in zip(kde._kernels, nodes, strict=True):
+        direct = reflectedDensity(kde, kernel.position)
+        assert np.exp(kde.evaluate(kernel.position)) == pytest.approx(direct)
+        assert np.exp(logPDF[tuple(reversed(index))]) == pytest.approx(direct)
+    centers = [k.position for k in kde._kernels]
+    meanDensity = np.mean([reflectedDensity(kde, c) for c in centers])
+    assert np.exp(kde.getLogMeanDensity()) == pytest.approx(meanDensity)
+
+
+def test_merge_search_rescales_by_the_grown_bandwidth():
+    """With useExistingBandwidths=False, distances are measured in units of the
+    incoming kernel's bandwidth. After a merge that kernel is wider, so the
+    search for a further neighbor must use the widened bandwidth, not the one
+    it had before absorbing anything."""
+    space = makeSpace((-4.0, 4.0, 41, False))
+    kde = OnlineKDE(space, compressionThreshold=0.0, useExistingBandwidths=False)
+    kde._addKernel(np.array([0.005]), np.array([1.0]), 0.0, adjustBandwidth=False)
+    kde._addKernel(np.array([0.5]), np.array([0.01]), 0.0, adjustBandwidth=False)
+    kde._compressionThreshold = 1.0
+    # 0.5 bandwidths from the first kernel, so it merges; the result is about
+    # 0.71 wide and 0.70 of that from the second kernel, which must merge too
+    kde._addKernel(np.array([0.0]), np.array([0.01]), 0.0, adjustBandwidth=False)
+    assert kde.getNumKernels() == 1
+
+
+def test_empty_kde_log_pdf_is_nan_without_a_runtime_warning():
+    import warnings
+
+    kde = OnlineKDE(makeSpace((-4.0, 4.0, 41, False)))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert np.all(np.isnan(kde.getLogPDF()))

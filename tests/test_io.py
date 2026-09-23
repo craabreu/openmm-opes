@@ -123,3 +123,10 @@ def test_a_peer_does_not_see_a_restarted_walker_twice(tmp_path):
     assert set(loaded) == {2}
     assert loaded[2]["logSumW"] == pytest.approx(6.0)
     assert len(list(tmp_path.glob("kde_*.npz"))) == 1
+
+
+def test_save_creates_a_missing_bias_directory(tmp_path):
+    biasDir = tmp_path / "walkers"
+    sharer = BiasSharer(str(biasDir), walkerId=7)
+    sharer.save(makeState(1.0))
+    assert sorted(p.name for p in biasDir.iterdir()) == ["kde_7_1.npz"]

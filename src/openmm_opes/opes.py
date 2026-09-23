@@ -344,7 +344,11 @@ class OPES:
             biasEnergy = biasEnergy * unit.kilojoules_per_mole
         if variance is None:
             variance = self._variance["total"].get()
-        if np.any(np.asarray(variance) <= 0):
+        # A plain list survives the positivity check below (np.asarray there
+        # is local to that check) but then fails the /= self._biasFactor
+        # division that follows, so it is coerced once, up front, for both.
+        variance = np.asarray(variance, dtype=float)
+        if np.any(variance <= 0):
             # Spec 7.4.4: a zero bandwidth poisons the estimate with NaN.
             warnings.warn(
                 "Skipping kernel deposition: the CV variance estimate is not "
@@ -442,7 +446,14 @@ class OPES:
         position = self.getCollectiveVariables(simulation)
         if not self._warmupComplete:
             self._updateSampleStats(position)
-            if simulation.currentStep >= self.warmupSteps:
+            # Not simulation.currentStep >= warmupSteps: currentStep is the
+            # simulation's absolute clock, which already includes any steps
+            # run before this OPES existed (equilibration, or steps from a
+            # previous segment across a restart). _counter instead counts
+            # only the variance samples THIS sampler has taken, which is
+            # what warmupSteps is meant to bound and which getState/setState
+            # carry across a restart.
+            if self._counter >= self.warmupSteps // self.varianceFrequency:
                 self._finishWarmup()
             return
         if self._adaptiveVariance:
@@ -493,6 +504,13 @@ class OPES:
         # re-deriving would risk rescaling an already-frozen variance by gamma
         # a second time on reload. See spec 7.7.
         state["warmupComplete"] = float(self._warmupComplete)
+        # Only present when varianceFrequency was given (see __init__). Not
+        # persisting these left a restored sampler's running CV mean and its
+        # windowing counter starting from zero, instead of continuing where
+        # the saved run left off.
+        if hasattr(self, "_counter"):
+            state["counter"] = float(self._counter)
+            state["sampleMean"] = self._sampleMean.copy()
         return state
 
     def setState(self, state) -> None:
@@ -517,3 +535,6 @@ class OPES:
         self._warmupComplete = bool(float(state["warmupComplete"]))
         if self._warmupComplete and self.warmupSteps is not None:
             self._adaptiveVariance = False
+        if hasattr(self, "_counter") and "counter" in state:
+            self._counter = int(state["counter"])
+            self._sampleMean = np.asarray(state["sampleMean"]).copy()

@@ -248,7 +248,7 @@ def test_opes_is_exported_from_the_package():
     assert openmm_opes.OPES is OPES
 
 
-def runSteps(sampler, system, nsteps, seed=1234):
+def runSteps(sampler, system, nsteps, seed=1234, stepsBefore=0):
     integrator = openmm.LangevinMiddleIntegrator(
         300 * unit.kelvin, 10.0 / unit.picosecond, 0.002 * unit.picoseconds
     )
@@ -260,6 +260,8 @@ def runSteps(sampler, system, nsteps, seed=1234):
     )
     simulation.context.setPositions([openmm.Vec3(0.1, 0, 0)])
     simulation.context.setVelocitiesToTemperature(300 * unit.kelvin, seed + 1)
+    # stepsBefore stands in for equilibration run before OPES takes over
+    simulation.step(stepsBefore)
     sampler.step(simulation, nsteps)
     return simulation
 
@@ -478,3 +480,51 @@ def test_free_energy_docstring_grid_spacing_matches_the_actual_axis():
     spacing = (2.0 - -2.0) / (gridWidth - 1)
     assert documented[1] - documented[0] == pytest.approx(spacing)
     assert "gridWidth-1" in OPES.getFreeEnergy.__doc__
+
+
+# --- Regression tests for the second code review ---------------------------
+
+
+def test_warmup_counts_its_own_steps_not_the_simulation_clock():
+    """warmupSteps was compared to simulation.currentStep, so a simulation
+    equilibrated beforehand ended warm-up at the first interval, on one
+    zero-deviation sample, and raised."""
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10, warmupSteps=500)
+    simulation = runSteps(sampler, system, 490, stepsBefore=1000)
+    assert not sampler._warmupComplete
+    sampler.step(simulation, 10)
+    assert sampler._warmupComplete
+
+
+def test_warmup_progress_survives_a_restart():
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10, warmupSteps=500)
+    runSteps(sampler, system, 300)
+    assert not sampler._warmupComplete
+
+    system2, variable2 = makeHarmonicSystem()
+    restored = OPES(system2, [variable2], 300.0, 20.0, 100, 10, warmupSteps=500)
+    restored.setState(sampler.getState())
+    runSteps(restored, system2, 200)
+    assert restored._warmupComplete
+
+
+def test_set_state_restores_the_running_cv_mean():
+    """The running CV mean and its sample count were not saved, so a restored
+    sampler restarted its mean from the next sample and its window from zero."""
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10)
+    runSteps(sampler, system, 500)
+
+    system2, variable2 = makeHarmonicSystem()
+    restored = OPES(system2, [variable2], 300.0, 20.0, 100, 10)
+    restored.setState(sampler.getState())
+    assert restored._counter == sampler._counter
+    assert restored._sampleMean == pytest.approx(sampler._sampleMean)
+
+
+def test_add_kernel_accepts_a_plain_list_variance():
+    sampler = makeOPES()
+    assert sampler.addKernel([0.0], 0.0, variance=[0.01])
+    assert sampler.getNumKernels() == 1

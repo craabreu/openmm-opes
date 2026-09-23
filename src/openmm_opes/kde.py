@@ -43,7 +43,13 @@ class CVSpace:
             if bounded and not cv.periodic:
                 left = np.linspace(2 * a - b, a, n)
                 right = np.linspace(b, 2 * b - a, n)
-                left[-1] = right[0] = np.inf
+                # left's mirror of the lower wall coincides with the wall
+                # itself (a reflects to a), and right's mirror of the upper
+                # wall coincides with it too (b reflects to b): these are
+                # real, on-domain positions, not degenerate ones, and must
+                # contribute their (unmirrored) density like any other
+                # point. Previously set to +inf, which zeroed that
+                # contribution and halved the folded density at both walls.
                 points = np.concatenate((points, np.flip(left), np.flip(right)))
             self._grid.append(points)
         self._widths = np.array([cv.gridWidth for cv in self.variables])
@@ -104,6 +110,41 @@ class CVSpace:
             indices[list(self._pdims)] %= self._widths[list(self._pdims)]
         indices = np.clip(indices, 0, self._widths - 1)
         return tuple(reversed(indices))
+
+    def mirrorPositions(self, position):
+        """Every image of ``position`` under the reflective boundaries.
+
+        For each non-periodic dimension, reflecting a point off both walls
+        gives two images in addition to the point itself; the images across
+        every dimension combine multiplicatively (a corner sees images of
+        images). Unbounded spaces, or spaces with only periodic CVs, have no
+        images: ``[position]`` is returned unchanged.
+
+        A kernel centered at any one of these images is, by the symmetry of
+        reflection, exactly as far from a given query point as the original
+        kernel is from that point's own mirror image -- so summing a
+        kernel's density over these images is equivalent to summing the
+        query point's images against the one true kernel, which is what the
+        tripled evaluation grid does. Used to keep :meth:`Kernel.evaluate`
+        (arbitrary points) consistent with :meth:`Kernel.evaluateOnGrid`.
+        """
+        positions = [np.array(position, dtype=float)]
+        if not self.bounded:
+            return positions
+        for i, cv in enumerate(self.variables):
+            if cv.periodic:
+                continue
+            expanded = []
+            for p in positions:
+                expanded.append(p)
+                mirrorLow = p.copy()
+                mirrorLow[i] = 2 * cv.minValue - p[i]
+                expanded.append(mirrorLow)
+                mirrorHigh = p.copy()
+                mirrorHigh[i] = 2 * cv.maxValue - p[i]
+                expanded.append(mirrorHigh)
+            positions = expanded
+        return positions
 
     def foldedGrid(self, values):
         """Fold a tripled bounded grid back onto the physical domain, in log space."""
@@ -184,6 +225,9 @@ class Kernel:
     def _scaledDistances(self, points, bandwidths):
         return self.cvSpace.displacement(self.position, points) / bandwidths
 
+    def _scaledDistancesFrom(self, center, points, bandwidths):
+        return self.cvSpace.displacement(center, points) / bandwidths
+
     def findNearest(self, centers, bandwidths, ignore=()):
         """Index of and squared Mahalanobis distance to the nearest center."""
         if centers.size == 0:
@@ -209,10 +253,24 @@ class Kernel:
         self.logHeight = self._computeLogHeight()
 
     def evaluate(self, points):
-        """Log of the kernel at the given point or points."""
-        return self.logHeight + np.sum(
-            self.shape.exponents(self._scaledDistances(points, self.bandwidth)), axis=-1
-        )
+        """Log of the kernel at the given point or points.
+
+        Reflected at the domain walls when the space is bounded, by summing
+        over the kernel's mirror images (see :meth:`CVSpace.mirrorPositions`)
+        so this agrees with :meth:`evaluateOnGrid`. Unbounded spaces have no
+        images, so this reduces to the single-term evaluation.
+        """
+        images = self.cvSpace.mirrorPositions(self.position)
+        contributions = [
+            np.sum(
+                self.shape.exponents(
+                    self._scaledDistancesFrom(image, points, self.bandwidth)
+                ),
+                axis=-1,
+            )
+            for image in images
+        ]
+        return self.logHeight + np.logaddexp.reduce(contributions, axis=0)
 
     def evaluateOnGrid(self):
         """Log of the kernel on the CV-space grid, in gridShape order."""
@@ -344,20 +402,27 @@ class OnlineKDE:
 
     def _pushKernel(self, newKernel):
         centers = np.stack([k.position for k in self._kernels])
-        bandwidths = (
-            np.stack([k.bandwidth for k in self._kernels])
-            if self._useExistingBandwidths
-            else newKernel.bandwidth
-        )
+
+        def bandwidths():
+            # Re-read newKernel.bandwidth each call rather than capturing it
+            # once: merge() rebinds it to a wider array, and a stale capture
+            # kept searching at the pre-merge width, missing neighbors the
+            # now-wider kernel should also absorb.
+            return (
+                np.stack([k.bandwidth for k in self._kernels])
+                if self._useExistingBandwidths
+                else newKernel.bandwidth
+            )
+
         threshold = self._compressionThreshold
-        index, minSqDist = newKernel.findNearest(centers, bandwidths)
+        index, minSqDist = newKernel.findNearest(centers, bandwidths())
         toRemove = []
         # threshold > 0 guard: without it, coincident kernels satisfy 0 <= 0
         # and merge even when compression is meant to be disabled.
         while threshold > 0 and index >= 0 and minSqDist <= threshold**2:
             toRemove.append(index)
             newKernel.merge(self._kernels[index])
-            index, minSqDist = newKernel.findNearest(centers, bandwidths, toRemove)
+            index, minSqDist = newKernel.findNearest(centers, bandwidths(), toRemove)
         self._logPK = np.logaddexp(self._logPK, newKernel.evaluate(centers))
         self._logPG = np.logaddexp(self._logPG, newKernel.evaluateOnGrid())
         if toRemove:
@@ -387,7 +452,11 @@ class OnlineKDE:
         else:
             self._kernels = [newKernel]
             self._logPG = newKernel.evaluateOnGrid()
-            self._logPK = np.array([newKernel.logHeight])
+            # Not just logHeight: a bounded kernel's density at its own
+            # center also gets contributions from its mirror images, which
+            # evaluate() (unlike logHeight) accounts for. Invisible whenever
+            # a kernel has no images (unbounded, or far from every wall).
+            self._logPK = np.array([newKernel.evaluate(newKernel.position)])
 
     def update(self, position, logWeight, variance) -> None:
         """Deposit a kernel of the given log weight and per-CV variance."""
@@ -398,8 +467,15 @@ class OnlineKDE:
         return len(self._kernels)
 
     def getLogPDF(self):
-        """Log of the normalized probability density on the grid."""
-        return self._logPG - self._logSumW
+        """Log of the normalized probability density on the grid.
+
+        With no kernels deposited yet, both operands are -inf and the
+        result is the documented NaN (see :meth:`getState`'s empty-KDE
+        note) rather than an error; the subtraction is expected to be
+        undefined here, not a sign that something went wrong.
+        """
+        with np.errstate(invalid="ignore"):
+            return self._logPG - self._logSumW
 
     def getLogMeanDensity(self) -> float:
         """Log of Z_n, the mean density over the compressed kernel centers."""

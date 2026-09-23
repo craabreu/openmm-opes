@@ -76,6 +76,7 @@ class BiasSharer:
 
     def save(self, state: dict) -> None:
         """Write this walker's state atomically and drop the previous index."""
+        os.makedirs(self.biasDir, exist_ok=True)
         oldName = self._path("kde", self._saveIndex)
         self._saveIndex += 1
         tempName = self._path("temp", self._saveIndex)
