@@ -33,8 +33,6 @@ class RunningAverage:
         """An independent copy. The array is copied, not aliased."""
         new = self.__class__(self._total.shape[0])
         new._num = self._num
-        # The source aliased this array, so merging peers into a copy silently
-        # corrupted the original. See spec 7.4.1.
         new._total = self._total.copy()
         return new
 
@@ -99,7 +97,7 @@ class OPES:
         file rather than leaving the previous run's behind as a phantom peer.
     warmupSteps: int, optional
         When given, run this many steps without depositing kernels while
-        measuring the CV variance, then freeze it. See the spec, section 7.7.
+        measuring the CV variance, then freeze it.
     compressionThreshold: float
         Mahalanobis distance below which kernels are merged.
     useExistingBandwidths: bool
@@ -170,10 +168,6 @@ class OPES:
 
         self._cvSpace = CVSpace(variables, bounded)
         self._cases = ("total",) + ("self",) * bool(saveFrequency)
-        # Retained so every KDE this sampler rebuilds later -- in setState and
-        # in _syncWithDisk -- is configured identically. Rebuilding with the
-        # defaults silently reverted kernelShape/compressionThreshold on
-        # restore, changing the bias and every subsequent deposition.
         self._compressionThreshold = compressionThreshold
         self._useExistingBandwidths = useExistingBandwidths
         self._kernelShape = kernelShape
@@ -191,8 +185,6 @@ class OPES:
             self._counter = 0
             self._sampleMean = np.zeros(d)
         else:
-            # Spec 7.5: biasWidth is the unbiased sigma^(0), while _variance
-            # holds a sampled-distribution variance, which is gamma times wider.
             self._setFixedVariance(
                 biasFactor * np.array([v.biasWidth**2 for v in variables])
             )
@@ -203,14 +195,12 @@ class OPES:
         self._widths = [] if d == 1 else gridWidths
         self._limits = [limit for v in variables for limit in (v.minValue, v.maxValue)]
         periodic = numPeriodics == d
-        # The table holds V + barrier, not V: see updateContext.
         initial = np.zeros(int(np.prod(gridWidths)))
 
         energyFunction = "table(" + ",".join(f"cv{i}" for i in range(d)) + ")"
         self._force = mm.CustomCVForce(energyFunction)
         for i, variable in enumerate(variables):
             self._force.addCollectiveVariable(f"cv{i}", variable.force)
-        # Explicit branch rather than a dynamic getattr, so ty can check it.
         if d == 1:
             table = mm.Continuous1DFunction(initial, *self._limits, periodic)
         elif d == 2:
@@ -254,9 +244,6 @@ class OPES:
                 raise ValueError(
                     "warmupSteps must span at least two varianceFrequency intervals"
                 )
-        # Checked on its own: with an explicit biasFactor, the barrier / kT
-        # test below never sees the barrier, and a non-positive one gives
-        # epsilon >= 1, which swamps P/Z and flattens the bias.
         if self.barrier <= 0 * unit.kilojoules_per_mole:
             raise ValueError("barrier must be positive")
         if biasFactor <= 1.0:
@@ -273,7 +260,7 @@ class OPES:
             raise RuntimeError("OPES requires a free force group, but all are in use.")
 
     def _setFixedVariance(self, value) -> None:
-        """Replace every accumulator with a frozen value (spec 7.5 and 7.7)."""
+        """Replace every accumulator with a frozen value."""
         for case in self._cases:
             average = RunningAverage(len(self.variables))
             average.update(np.asarray(value, dtype=float))
@@ -362,12 +349,8 @@ class OPES:
             biasEnergy = biasEnergy * unit.kilojoules_per_mole
         if variance is None:
             variance = self._variance["total"].get()
-        # A plain list survives the positivity check below (np.asarray there
-        # is local to that check) but then fails the /= self._biasFactor
-        # division that follows, so it is coerced once, up front, for both.
         variance = np.asarray(variance, dtype=float)
         if np.any(variance <= 0):
-            # Spec 7.4.4: a zero bandwidth poisons the estimate with NaN.
             warnings.warn(
                 "Skipping kernel deposition: the CV variance estimate is not "
                 "yet positive. Use a varianceFrequency smaller than frequency, "
@@ -376,11 +359,6 @@ class OPES:
             )
             return False
         logWeight = biasEnergy / self._kbt
-        # Sized once, by the shared "total" estimates, and deposited
-        # identically into "self". _syncWithDisk rebuilds "total" from every
-        # walker's "self", so sizing "self" by the walker's own sample size
-        # widened every kernel by numWalkers^(1/(d+4)) and made the bias
-        # jump at each sync.
         factor = self._kde["total"].bandwidthFactor(0.0)
         factorRW = self._kde["total.rw"].bandwidthFactor(logWeight)
         for case in self._cases:
@@ -404,8 +382,6 @@ class OPES:
 
         Returns whether "total" was rebuilt, i.e. whether the bias changed.
         """
-        # Only ever called when saveFrequency is set, which _validate ties to
-        # biasDir being set, which is what constructs self._sharer.
         assert self._sharer is not None
         self._sharer.save(self._getSharedState())
         if not self._sharer.load():
@@ -477,30 +453,15 @@ class OPES:
         position = self.getCollectiveVariables(simulation)
         if not self._warmupComplete:
             self._updateSampleStats(position)
-            # Not simulation.currentStep >= warmupSteps: currentStep is the
-            # simulation's absolute clock, which already includes any steps
-            # run before this OPES existed (equilibration, or steps from a
-            # previous segment across a restart). _counter instead counts
-            # only the variance samples THIS sampler has taken, which is
-            # what warmupSteps is meant to bound and which getState/setState
-            # carry across a restart.
             if self._counter >= self.warmupSteps // self.varianceFrequency:
                 self._finishWarmup()
             return
         if self._adaptiveVariance:
             self._updateSampleStats(position)
-            # Hold the first kernel until a full stats window of variance
-            # samples is in: after a single stride the estimate rests on a
-            # few correlated samples, and the too-narrow kernels it yields
-            # survive compression. An estimate holding kernels (restored,
-            # or loaded from peers) is past this point.
             if self._counter < self._tau and not self._kde["total"]:
                 return
         if simulation.currentStep % self.frequency == 0:
             groups = {self._force.getForceGroup()}
-            # Undo the table's +barrier offset (see updateContext): the
-            # reweighting needs V itself, or kernels restored from a state
-            # saved before the offset would be off by exp(barrier/kT).
             energy = (
                 simulation.context.getState(
                     getEnergy=True, groups=groups
@@ -513,9 +474,6 @@ class OPES:
                 and simulation.currentStep % self.saveFrequency == 0
             ):
                 changed = self._syncWithDisk() or changed
-            # Refreshed once, after the sync, so kernels loaded from peers
-            # reach the forces now rather than at the next deposition. A
-            # skipped deposition with nothing loaded leaves the bias as it was.
             if changed:
                 self.updateContext(simulation.context)
 
@@ -526,7 +484,7 @@ class OPES:
         and this measurement is the unbiased variance. _variance holds a
         sampled-distribution variance by convention, which is gamma times
         wider, so that is what gets stored. This is the same transformation
-        the fixed-bandwidth path applies to biasWidth. See spec 7.5 and 7.7.
+        the fixed-bandwidth path applies to biasWidth.
         """
         measured = self._variance["total"].get()
         if np.any(measured <= 0):
@@ -546,14 +504,7 @@ class OPES:
         variance = self._variance["total"].getState()
         state["totalVar_num"] = variance["num"]
         state["totalVar_total"] = variance["total"]
-        # Persisted explicitly rather than re-derived from the step counter:
-        # re-deriving would risk rescaling an already-frozen variance by gamma
-        # a second time on reload. See spec 7.7.
         state["warmupComplete"] = float(self._warmupComplete)
-        # Only present when varianceFrequency was given (see __init__). Not
-        # persisting these left a restored sampler's running CV mean and its
-        # windowing counter starting from zero, instead of continuing where
-        # the saved run left off.
         if hasattr(self, "_counter"):
             state["counter"] = float(self._counter)
             state["sampleMean"] = self._sampleMean.copy()
@@ -568,10 +519,6 @@ class OPES:
             {"num": state["totalVar_num"], "total": state["totalVar_total"]}
         )
         self._variance["total"] = average
-        # The own-contribution accumulators must come back too. _syncWithDisk
-        # rebuilds "total" from "self" plus peers, so leaving "self" empty
-        # threw the restored history away at the next sync and republished an
-        # empty state to the other walkers.
         if "self" in self._cases and "kde_logWeights" in state:
             for prefix, key in (("kde", "self"), ("kdeRW", "self.rw")):
                 self._kde[key] = self._kdeFromState(state, prefix)

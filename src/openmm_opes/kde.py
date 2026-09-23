@@ -43,13 +43,6 @@ class CVSpace:
             if bounded and not cv.periodic:
                 left = np.linspace(2 * a - b, a, n)
                 right = np.linspace(b, 2 * b - a, n)
-                # left's mirror of the lower wall coincides with the wall
-                # itself (a reflects to a), and right's mirror of the upper
-                # wall coincides with it too (b reflects to b): these are
-                # real, on-domain positions, not degenerate ones, and must
-                # contribute their (unmirrored) density like any other
-                # point. Previously set to +inf, which zeroed that
-                # contribution and halved the folded density at both walls.
                 points = np.concatenate((points, np.flip(left), np.flip(right)))
             self._grid.append(points)
         self._widths = np.array([cv.gridWidth for cv in self.variables])
@@ -97,7 +90,6 @@ class CVSpace:
         if self._periodic:
             for dim, length in zip(self._pdims, self._plengths, strict=True):
                 distances[dim] -= length * np.rint(distances[dim] / length)
-                # a periodic grid's last node is the same point as its first
                 distances[dim][-1] = distances[dim][0]
         return distances
 
@@ -342,19 +334,13 @@ class OnlineKDE:
         return new
 
     def __iadd__(self, other):
-        # Combine the weight moments directly rather than letting _addKernel
-        # re-accumulate them from the merged kernels. Total weight survives
-        # that route (merging preserves it), but the sum of SQUARED weights
-        # does not: a compressed kernel carries the combined weight of every
-        # sample it absorbed, so squaring it far overstates the true sum and
-        # collapses the effective sample size, over-widening every kernel
-        # deposited afterwards.
-        #
-        # This is a deliberate divergence from the source implementation,
-        # whose compressed branch re-accumulates the same way (its
-        # uncompressed branch, dropped here, combines them correctly). The
-        # parity fixture only exercises single-KDE deposition, so it is
-        # unaffected; only multi-walker merging changes.
+        """Absorb every kernel of ``other``.
+
+        The weight moments are combined directly rather than re-accumulated
+        from the absorbed kernels: a compressed kernel carries the combined
+        weight of all its samples, so squaring it would overstate the sum of
+        squared weights and collapse the effective sample size.
+        """
         logSumW = np.logaddexp(self._logSumW, other._logSumW)
         logSumWSq = np.logaddexp(self._logSumWSq, other._logSumWSq)
         for kernel in other._kernels:
@@ -387,8 +373,7 @@ class OnlineKDE:
         Callers MUST add any replacement kernel's contribution to _logPK and
         _logPG *before* calling this. _logsubexp loses precision as its two
         arguments converge, and the replacement is what keeps the removed
-        kernel from dominating the density at its own center. See spec 12.4;
-        tests/test_kde.py pins the resulting margin.
+        kernel from dominating the density at its own center.
         """
         toRemove = sorted(toRemove, reverse=True)
         removed = []
@@ -404,10 +389,6 @@ class OnlineKDE:
         centers = np.stack([k.position for k in self._kernels])
 
         def bandwidths():
-            # Re-read newKernel.bandwidth each call rather than capturing it
-            # once: merge() rebinds it to a wider array, and a stale capture
-            # kept searching at the pre-merge width, missing neighbors the
-            # now-wider kernel should also absorb.
             return (
                 np.stack([k.bandwidth for k in self._kernels])
                 if self._useExistingBandwidths
@@ -417,8 +398,6 @@ class OnlineKDE:
         threshold = self._compressionThreshold
         index, minSqDist = newKernel.findNearest(centers, bandwidths())
         toRemove = []
-        # threshold > 0 guard: without it, coincident kernels satisfy 0 <= 0
-        # and merge even when compression is meant to be disabled.
         while threshold > 0 and index >= 0 and minSqDist <= threshold**2:
             toRemove.append(index)
             newKernel.merge(self._kernels[index])
@@ -450,10 +429,6 @@ class OnlineKDE:
         else:
             self._kernels = [newKernel]
             self._logPG = newKernel.evaluateOnGrid()
-            # Not just logHeight: a bounded kernel's density at its own
-            # center also gets contributions from its mirror images, which
-            # evaluate() (unlike logHeight) accounts for. Invisible whenever
-            # a kernel has no images (unbounded, or far from every wall).
             self._logPK = np.array([newKernel.evaluate(newKernel.position)])
 
     def bandwidthFactor(self, logWeight) -> float:
@@ -560,8 +535,6 @@ class OnlineKDE:
         self._logSumW = float(state["logSumW"])
         self._logSumWSq = float(state["logSumWSq"])
         self._logPK = np.asarray(state["logPK"]).copy()
-        # Seeded with -inf so an empty kernel list restores cleanly; the source
-        # used a bare reduce here and raised TypeError on an empty sequence.
         self._logPG = functools.reduce(
             np.logaddexp,
             (k.evaluateOnGrid() for k in self._kernels),
