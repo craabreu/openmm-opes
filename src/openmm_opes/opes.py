@@ -164,7 +164,7 @@ class OPES:
             prefactor *= biasFactor
         self._kbt = kbt.in_units_of(unit.kilojoules_per_mole)
         self._biasFactor = biasFactor
-        self._prefactor = prefactor
+        self._prefactor = prefactor.in_units_of(unit.kilojoules_per_mole)
         self._logEpsilon = -barrier / prefactor
 
         self._cvSpace = CVSpace(variables, bounded)

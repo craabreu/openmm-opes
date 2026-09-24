@@ -700,3 +700,14 @@ def test_deposition_weights_use_the_unshifted_bias():
     (kernel,) = sampler._kde["total.rw"]._kernels
     kT = sampler._kbt.value_in_unit(unit.kilojoules_per_mole)
     assert kernel.logWeight == pytest.approx(-20.0 / kT)
+
+
+@pytest.mark.parametrize("exploreMode", [False, True])
+def test_bias_and_free_energy_share_kilojoules_per_mole(exploreMode):
+    """Regression: getBias() came back in J/mol, inherited from
+    MOLAR_GAS_CONSTANT_R, while getFreeEnergy() was in kJ/mol."""
+    sampler = makeOPES(exploreMode=exploreMode)
+    assert sampler.getBias().unit == unit.kilojoules_per_mole
+    sampler.addKernel([0.0], 0.0, variance=[0.01])
+    assert sampler.getBias().unit == unit.kilojoules_per_mole
+    assert sampler.getFreeEnergy().unit == unit.kilojoules_per_mole
