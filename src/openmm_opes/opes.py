@@ -199,6 +199,11 @@ class OPES:
                 biasFactor * np.array([v.biasWidth**2 for v in variables])
             )
 
+        self._sharedKeys = {"var_num", "var_total"} | {
+            f"{_SHARED_PREFIXES[weighting]}_{name}"
+            for weighting in self._weightings
+            for name in self._newKDE().getState()
+        }
         self._sharer = BiasSharer(biasDir, walkerId) if biasDir is not None else None
 
         gridWidths = [v.gridWidth for v in variables]
@@ -398,11 +403,8 @@ class OPES:
         """
         assert self._sharer is not None
         self._sharer.save(self._getSharedState())
-        updated = self._sharer.load()
-        if not updated:
+        if not self._sharer.load(self._checkPeer):
             return False
-        for walkerId, state in updated.items():
-            self._checkMode(state, f"Walker {walkerId}")
         for weighting in self._weightings:
             self._kde[f"total{weighting}"] = copy(self._kde[f"self{weighting}"])
         self._variance["total"] = self._variance["self"].copy()
@@ -427,6 +429,13 @@ class OPES:
         state["var_total"] = variance["total"]
         state["exploreMode"] = float(self.exploreMode)
         return state
+
+    def _checkPeer(self, walkerId, state):
+        self._checkMode(state, f"Walker {walkerId}")
+        missing = self._sharedKeys - state.keys()
+        if missing:
+            return "lacks " + ", ".join(sorted(missing))
+        return None
 
     def _checkMode(self, state, source) -> None:
         if "exploreMode" not in state:

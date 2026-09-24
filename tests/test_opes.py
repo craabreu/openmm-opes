@@ -831,3 +831,17 @@ def test_set_state_rejects_a_warmup_snapshot_without_warmup_steps(varianceFreque
     restored = makeOPES(varianceFrequency=varianceFrequency)
     with pytest.raises(ValueError, match="taken during warm-up"):
         restored.setState(sampler.getState())
+
+
+def test_a_peer_file_missing_keys_is_skipped_with_a_warning(tmp_path):
+    def walker(walkerId):
+        return makeOPES(saveFrequency=100, biasDir=str(tmp_path), walkerId=walkerId)
+
+    mine, peer = walker(1), walker(2)
+    state = peer._getSharedState()
+    del state["var_num"]
+    peer._sharer.save(state)
+    mine.addKernel([0.0], 0.0, variance=[0.01])
+    with pytest.warns(UserWarning, match="lacks var_num"):
+        assert not mine._syncWithDisk()
+    assert mine.getNumKernels() == 1

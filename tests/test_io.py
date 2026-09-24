@@ -170,3 +170,28 @@ def test_a_stray_lookalike_file_does_not_advance_the_save_index(tmp_path):
     sharer = BiasSharer(str(tmp_path), walkerId=7)
     sharer.save(makeState(1.0))
     assert (tmp_path / "kde_7_1.npz").exists()
+
+
+def test_load_skips_a_peer_state_the_validator_rejects(tmp_path):
+    mine = BiasSharer(str(tmp_path), walkerId=1)
+    peer = BiasSharer(str(tmp_path), walkerId=2)
+    peer.save(makeState(5.0))
+    with pytest.warns(UserWarning, match="kde_2_1.npz is unusable"):
+        assert mine.load(lambda walkerId, state: "is unusable") == {}
+    assert mine.getLoadedStates() == {}
+    assert set(mine.load(lambda walkerId, state: None)) == {2}
+
+
+def test_load_keeps_the_last_good_state_when_a_peer_goes_bad(tmp_path):
+    mine = BiasSharer(str(tmp_path), walkerId=1)
+    peer = BiasSharer(str(tmp_path), walkerId=2)
+    peer.save(makeState(5.0))
+    mine.load()
+    peer.save({"logSumW": 6.0})
+
+    def validate(walkerId, state):
+        return None if "positions" in state else "lacks positions"
+
+    with pytest.warns(UserWarning, match="lacks positions"):
+        assert mine.load(validate) == {}
+    assert mine.getLoadedStates()[2]["logSumW"] == pytest.approx(5.0)
