@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import re
 import warnings
+import zipfile
 
 import numpy as np
 
@@ -102,9 +103,16 @@ class BiasSharer:
                     os.path.join(self.biasDir, filename), allow_pickle=False
                 ) as data:
                     state = {key: data[key] for key in data.files}
-            except (OSError, ValueError):
+            except FileNotFoundError:
                 warnings.warn(
-                    f"The file {filename} seems to have been deleted. Using the "
+                    f"The file {filename} was deleted before it could be read. "
+                    "Using the latest loaded data from the same walker.",
+                    stacklevel=2,
+                )
+                continue
+            except (OSError, ValueError, EOFError, zipfile.BadZipFile) as error:
+                warnings.warn(
+                    f"The file {filename} could not be read ({error}). Using the "
                     "latest loaded data from the same walker.",
                     stacklevel=2,
                 )
