@@ -149,11 +149,13 @@ class CVSpace:
 
 
 class KernelShape:
-    """A kernel profile: its per-dimension log normalization and its exponent."""
+    """A kernel profile: its per-dimension log normalization, its variance at
+    unit bandwidth, and its exponent."""
 
-    def __init__(self, name: str, logNorm: float, exponents):
+    def __init__(self, name: str, logNorm: float, variance: float, exponents):
         self.name = name
         self.logNorm = logNorm
+        self.variance = variance
         self._exponents = exponents
 
     def exponents(self, x):
@@ -175,11 +177,12 @@ def _compactExponents(x):
 
 
 #: Unbounded Gaussian profile; the default and the one both papers use.
-GAUSSIAN = KernelShape("gaussian", np.log(2 * np.pi) / 2, _gaussianExponents)
+GAUSSIAN = KernelShape("gaussian", np.log(2 * np.pi) / 2, 1.0, _gaussianExponents)
 
 #: Compact quartic profile with support of +/- 3 bandwidths. Its normalization
-#: constant is exactly the integral of (9 - x**2)**4 over [-3, 3].
-COMPACT = KernelShape("compact", np.log(559872 / 35), _compactExponents)
+#: constant is exactly the integral of (9 - x**2)**4 over [-3, 3], and its
+#: variance at unit bandwidth is 9/11.
+COMPACT = KernelShape("compact", np.log(559872 / 35), 9 / 11, _compactExponents)
 
 KERNEL_SHAPES = {shape.name: shape for shape in (GAUSSIAN, COMPACT)}
 
@@ -238,7 +241,9 @@ class Kernel:
         disp = self.cvSpace.displacement(self.position, other.position)
         self.position = self.cvSpace.endpoint(self.position, w2 * disp)
         self.bandwidth = np.sqrt(
-            w1 * self.bandwidth**2 + w2 * other.bandwidth**2 + w1 * w2 * disp**2
+            w1 * self.bandwidth**2
+            + w2 * other.bandwidth**2
+            + w1 * w2 * disp**2 / self.shape.variance
         )
         self.logWeight = logSumWeights
         self.numSamples += other.numSamples
