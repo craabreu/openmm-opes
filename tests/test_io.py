@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pytest
 
@@ -63,17 +65,39 @@ def test_load_rereads_a_peer_that_advanced(tmp_path):
     assert loaded[2]["logSumW"] == pytest.approx(6.0)
 
 
-def test_load_tolerates_a_peer_file_vanishing_mid_scan(tmp_path):
-    """A file deleted before os.listdir() runs never appears at all, so this
-    corrupts the file's contents in place instead: it still appears in the
-    directory listing, but fails when load() tries to open it, exactly like a
-    real delete racing between listdir() and open()."""
+def test_load_tolerates_a_peer_file_vanishing_mid_scan(tmp_path, monkeypatch):
+    """A delete racing between listdir() and open(): listdir still names the
+    file, but it is gone by the time load() opens it."""
+    mine = BiasSharer(str(tmp_path), walkerId=1)
+    peer = BiasSharer(str(tmp_path), walkerId=2)
+    peer.save(makeState(5.0))
+    listing = os.listdir(tmp_path)
+    for path in tmp_path.glob("kde_2_*.npz"):
+        path.unlink()
+    monkeypatch.setattr(os, "listdir", lambda _: listing)
+    with pytest.warns(UserWarning, match="was deleted before it could be read"):
+        assert mine.load() == {}
+
+
+@pytest.mark.parametrize(
+    "corrupt",
+    [
+        lambda data: b"",
+        lambda data: data[: len(data) // 2],
+        lambda data: data[:-10],
+        lambda data: b"not a valid npz file",
+    ],
+    ids=["empty", "half", "tail-cut", "garbage"],
+)
+def test_load_tolerates_an_unreadable_peer_file(tmp_path, corrupt):
+    """Regression: an empty or truncated file, as a network filesystem can
+    briefly expose, raised EOFError or BadZipFile and crashed the walker."""
     mine = BiasSharer(str(tmp_path), walkerId=1)
     peer = BiasSharer(str(tmp_path), walkerId=2)
     peer.save(makeState(5.0))
     for path in tmp_path.glob("kde_2_*.npz"):
-        path.write_bytes(b"not a valid npz file")
-    with pytest.warns(UserWarning, match="seems to have been deleted"):
+        path.write_bytes(corrupt(path.read_bytes()))
+    with pytest.warns(UserWarning, match="could not be read"):
         assert mine.load() == {}
 
 
