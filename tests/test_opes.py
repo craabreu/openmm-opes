@@ -711,3 +711,42 @@ def test_bias_and_free_energy_share_kilojoules_per_mole(exploreMode):
     sampler.addKernel([0.0], 0.0, variance=[0.01])
     assert sampler.getBias().unit == unit.kilojoules_per_mole
     assert sampler.getFreeEnergy().unit == unit.kilojoules_per_mole
+
+
+def test_a_single_walker_checkpoint_seeds_a_walkers_own_contribution(tmp_path):
+    """Regression: restoring a single-walker snapshot into a multi-walker
+    sampler left its own estimates empty, so the first sync rebuilt the
+    shared bias from the peers alone and dropped the restored history."""
+
+    def numSamples(kde):
+        return sum(kernel.numSamples for kernel in kde._kernels)
+
+    system, variable = makeHarmonicSystem()
+    single = OPES(system, [variable], 300.0, 20.0, 100, 10)
+    runSteps(single, system, 2000)
+    restoredSamples = numSamples(single._kde["total.rw"])
+    assert restoredSamples > 0
+
+    def walker(walkerId):
+        system, variable = makeHarmonicSystem()
+        return OPES(
+            system,
+            [variable],
+            300.0,
+            20.0,
+            100,
+            10,
+            saveFrequency=100,
+            biasDir=str(tmp_path),
+            walkerId=walkerId,
+        )
+
+    a, b = walker(1), walker(2)
+    a.setState(single.getState())
+    assert numSamples(a._kde["self.rw"]) == restoredSamples
+    assert a._variance["self"].get() == pytest.approx(single.getVariance())
+
+    b.addKernel([0.5], 0.0, variance=[0.01])
+    b._syncWithDisk()
+    assert a._syncWithDisk()
+    assert numSamples(a._kde["total.rw"]) == restoredSamples + 1
