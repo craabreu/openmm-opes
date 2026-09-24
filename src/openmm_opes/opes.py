@@ -514,7 +514,11 @@ class OPES:
         return state
 
     def setState(self, state) -> None:
-        """Restore from a :meth:`getState` snapshot."""
+        """Restore from a :meth:`getState` snapshot.
+
+        A snapshot from a single-walker run seeds this walker's own
+        contribution to the shared bias, since that run had no peers.
+        """
         for prefix, key in (("total", "total"), ("totalRW", "total.rw")):
             self._kde[key] = self._kdeFromState(state, prefix)
         average = RunningAverage(len(self.variables))
@@ -522,12 +526,17 @@ class OPES:
             {"num": state["totalVar_num"], "total": state["totalVar_total"]}
         )
         self._variance["total"] = average
-        if "self" in self._cases and "kde_logWeights" in state:
+        if "self" in self._cases and "var_num" in state:
             for prefix, key in (("kde", "self"), ("kdeRW", "self.rw")):
                 self._kde[key] = self._kdeFromState(state, prefix)
             own = RunningAverage(len(self.variables))
             own.setState({"num": state["var_num"], "total": state["var_total"]})
             self._variance["self"] = own
+        elif "self" in self._cases:
+            for key in self._kde:
+                if key.startswith("self"):
+                    self._kde[key] = copy(self._kde[key.replace("self", "total", 1)])
+            self._variance["self"] = self._variance["total"].copy()
         self._warmupComplete = bool(float(state["warmupComplete"]))
         if self._warmupComplete and self.warmupSteps is not None:
             self._adaptiveVariance = False
