@@ -85,8 +85,14 @@ class BiasSharer:
         if os.path.exists(oldName):
             os.remove(oldName)
 
-    def load(self) -> dict[int, dict]:
-        """Return peer states that are new or have advanced since the last call."""
+    def load(self, validate=None) -> dict[int, dict]:
+        """Return peer states that are new or have advanced since the last call.
+
+        ``validate``, when given, is called with each newly read peer's id and
+        state, and returns why the state is unusable, or None. An unusable
+        state is skipped like an unreadable file. Exceptions it raises
+        propagate.
+        """
         updated: dict[int, dict] = {}
         for filename in os.listdir(self.biasDir):
             match = FILENAME_PATTERN.fullmatch(filename)
@@ -114,6 +120,14 @@ class BiasSharer:
                 warnings.warn(
                     f"The file {filename} could not be read ({error}). Using the "
                     "latest loaded data from the same walker.",
+                    stacklevel=2,
+                )
+                continue
+            problem = validate(walkerId, state) if validate is not None else None
+            if problem is not None:
+                warnings.warn(
+                    f"The file {filename} {problem}. Using the latest loaded "
+                    "data from the same walker.",
                     stacklevel=2,
                 )
                 continue

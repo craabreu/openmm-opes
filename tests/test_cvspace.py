@@ -46,9 +46,10 @@ def test_closest_node_clamps_outside_the_domain():
 
 def test_closest_node_wraps_for_periodic_cvs():
     space = makeSpace((0.0, 1.0, 11, True))
-    # raw index is -1 here; periodic wrap gives 10 (the domain's other edge),
-    # not clip-to-0 as a non-periodic CV would
-    assert space.closestNode(np.array([-0.1])) == (10,)
+    # -0.1 is 0.9; the last node is the first one, so the period is 10 nodes
+    assert space.closestNode(np.array([-0.1])) == (9,)
+    assert space.closestNode(np.array([1.0])) == (0,)
+    assert space.closestNode(np.array([1.1])) == (1,)
 
 
 def test_grid_distances_identify_the_periodic_endpoints():

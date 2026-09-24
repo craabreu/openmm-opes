@@ -108,3 +108,21 @@ def test_copy_does_not_share_arrays():
     duplicate = copy(kernel)
     duplicate.position[0] = 99.0
     assert kernel.position[0] == pytest.approx(0.5)
+
+
+def test_compact_shape_variance_at_unit_bandwidth_is_exact():
+    mass, _ = integrate.quad(lambda x: (9 - x * x) ** 4, -3, 3)
+    second, _ = integrate.quad(lambda x: x * x * (9 - x * x) ** 4, -3, 3)
+    assert COMPACT.variance == pytest.approx(second / mass)
+
+
+def test_compact_merge_preserves_the_second_moment():
+    space = makeSpace((-10.0, 10.0, 501, False))
+    merged = Kernel(space, [0.0], [1.0], np.log(3.0), shape=COMPACT)
+    other = Kernel(space, [2.0], [0.5], np.log(1.0), shape=COMPACT)
+    merged.merge(other)
+
+    w1, w2 = 0.75, 0.25
+    varRef = w1 * COMPACT.variance * 1.0**2 + w2 * COMPACT.variance * 0.5**2
+    varRef += w1 * w2 * 2.0**2
+    assert COMPACT.variance * merged.bandwidth[0] ** 2 == pytest.approx(varRef)
