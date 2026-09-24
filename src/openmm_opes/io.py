@@ -18,10 +18,6 @@ import warnings
 
 import numpy as np
 
-# Applied with fullmatch: match() would also accept names that merely start
-# like a bias file, such as a backup "kde_1_2.npz.bak".
-# Always applied with fullmatch: match() also accepted names that merely start
-# like a bias file, such as a backup "kde_1_2.npz.bak".
 FILENAME_PATTERN = re.compile(r"kde_(\d+)_(\d+)\.npz")
 
 
@@ -60,8 +56,6 @@ class BiasSharer:
             else walkerId
         )
         self._loaded: dict[int, _LoadedBias] = {}
-        # Resume past whatever this walker left behind, so save() overwrites
-        # its own previous file instead of orphaning it.
         self._saveIndex = self._highestOwnIndex()
 
     def _highestOwnIndex(self) -> int:

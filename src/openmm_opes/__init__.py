@@ -10,7 +10,7 @@ def __getattr__(name):
 
     An eager ``from .opes import OPES`` would also run on
     ``import openmm_opes.kde``, dragging openmm in and breaking the guarantee
-    that kde and io stay OpenMM-free. Task 1's test enforces that.
+    that kde and io stay OpenMM-free.
     """
     if name == "OPES":
         from .opes import OPES
