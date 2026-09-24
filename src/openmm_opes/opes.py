@@ -556,6 +556,11 @@ class OPES:
         sooner, e.g. before computing energies.
         """
         self._checkMode(state, "The snapshot")
+        if not float(state["warmupComplete"]) and self.warmupSteps is None:
+            raise ValueError(
+                "The snapshot was taken during warm-up, but this sampler has "
+                "no warmupSteps"
+            )
         for weighting in self._weightings:
             self._kde[f"total{weighting}"] = self._kdeFromState(
                 state, _SAVED_PREFIXES[weighting]

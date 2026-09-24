@@ -823,3 +823,11 @@ def test_walkers_sharing_a_directory_must_use_the_same_mode(tmp_path):
     explorer._syncWithDisk()
     with pytest.raises(ValueError, match=r"Walker 1 uses exploreMode=True"):
         plain._syncWithDisk()
+
+
+@pytest.mark.parametrize("varianceFrequency", [10, None])
+def test_set_state_rejects_a_warmup_snapshot_without_warmup_steps(varianceFrequency):
+    sampler = makeOPES(warmupSteps=500)
+    restored = makeOPES(varianceFrequency=varianceFrequency)
+    with pytest.raises(ValueError, match="taken during warm-up"):
+        restored.setState(sampler.getState())
