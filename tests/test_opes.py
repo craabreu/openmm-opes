@@ -750,3 +750,26 @@ def test_a_single_walker_checkpoint_seeds_a_walkers_own_contribution(tmp_path):
     b._syncWithDisk()
     assert a._syncWithDisk()
     assert numSamples(a._kde["total.rw"]) == restoredSamples + 1
+
+
+def test_a_restored_bias_reaches_the_context_before_the_first_step():
+    """Regression: setState left the Context holding the pre-restore table.
+
+    Until the next deposition the simulation ran on a flat bias, and that
+    deposition weighted its kernel by the stale energy.
+    """
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10)
+    runSteps(sampler, system, 3000)
+
+    system2, variable2 = makeHarmonicSystem()
+    restored = OPES(system2, [variable2], 300.0, 20.0, 100, 10)
+    restored.setState(sampler.getState())
+    simulation = runSteps(restored, system2, 0)
+    simulation.context.setPositions([openmm.Vec3(0.0, 0, 0)])
+    groups = {restored._force.getForceGroup()}
+    seen = simulation.context.getState(getEnergy=True, groups=groups)
+    expected = restored.getBias()[25] + restored.barrier
+    assert seen.getPotentialEnergy().value_in_unit(
+        unit.kilojoules_per_mole
+    ) == pytest.approx(expected.value_in_unit(unit.kilojoules_per_mole), abs=1e-6)

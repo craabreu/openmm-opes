@@ -181,6 +181,7 @@ class OPES:
         self._interval = varianceFrequency or frequency
         self._variance = {case: RunningAverage(d) for case in self._cases}
         self._warmupComplete = warmupSteps is None
+        self._contextStale = False
         if self._adaptiveVariance:
             self._tau = statsWindowSize * frequency // varianceFrequency
             self._counter = 0
@@ -337,6 +338,7 @@ class OPES:
             *self._widths, bias.ravel(), *self._limits
         )
         self._force.updateParametersInContext(context)
+        self._contextStale = False
 
     def addKernel(self, values, biasEnergy, variance=None) -> bool:
         """Deposit a kernel into the probability estimates.
@@ -441,6 +443,8 @@ class OPES:
         steps: int
             The number of time steps to integrate.
         """
+        if self._contextStale:
+            self.updateContext(simulation.context)
         stepsToGo = steps
         while stepsToGo > 0:
             nextSteps = min(
@@ -518,6 +522,10 @@ class OPES:
 
         A snapshot from a single-walker run seeds this walker's own
         contribution to the shared bias, since that run had no peers.
+
+        The restored bias reaches the simulation at the start of the next
+        :meth:`step`. Call :meth:`updateContext` to push it into a Context
+        sooner, e.g. before computing energies.
         """
         for prefix, key in (("total", "total"), ("totalRW", "total.rw")):
             self._kde[key] = self._kdeFromState(state, prefix)
@@ -543,3 +551,4 @@ class OPES:
         if hasattr(self, "_counter") and "counter" in state:
             self._counter = int(state["counter"])
             self._sampleMean = np.asarray(state["sampleMean"]).copy()
+        self._contextStale = True
