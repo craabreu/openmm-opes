@@ -112,6 +112,14 @@ def test_explicit_bias_factor_error_names_bias_factor():
         makeOPES(biasFactor=0.5)
 
 
+@pytest.mark.parametrize("biasFactor", [np.inf, np.nan])
+def test_non_finite_bias_factor_is_rejected(biasFactor):
+    """Regression: inf passed validation, then gave the reweighted kernels
+    zero bandwidth, pinning the bias to its -barrier floor forever."""
+    with pytest.raises(ValueError, match="biasFactor must be finite"):
+        makeOPES(biasFactor=biasFactor)
+
+
 def test_low_barrier_error_names_the_barrier():
     system, variable = makeSystemAndVariable()
     with pytest.raises(ValueError, match="barrier must be greater than 1 kT"):
