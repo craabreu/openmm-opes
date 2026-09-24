@@ -336,3 +336,45 @@ def test_empty_kde_log_pdf_is_nan_without_a_runtime_warning():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         assert np.all(np.isnan(kde.getLogPDF()))
+
+
+def freshCaches(kde):
+    """The grid and kernel-center densities recomputed from the kernel list."""
+    grid = np.logaddexp.reduce(np.stack([k.evaluateOnGrid() for k in kde._kernels]))
+    centers = np.stack([k.position for k in kde._kernels])
+    atCenters = np.logaddexp.reduce(
+        np.stack([k.evaluate(centers) for k in kde._kernels]), axis=0
+    )
+    return grid, atCenters
+
+
+@pytest.mark.parametrize("bounded", [False, True])
+def test_merging_into_a_narrow_heavy_kernel_keeps_the_wide_tails(bounded):
+    """Subtracting the absorbed wide kernel cancelled catastrophically in its
+    tails, where it held nearly all the density, leaving -inf behind."""
+    kde = OnlineKDE(makeSpace((-3.0, 3.0, 201, False), bounded=bounded))
+    kde.update(np.array([0.0]), 0.0, np.array([1.0]), factor=1.0)
+    kde.update(np.array([0.1]), 20.0, np.array([0.01]), factor=1.0)
+    assert kde.getNumKernels() == 1
+    grid, atCenters = freshCaches(kde)
+    assert np.all(np.isfinite(kde._logPG))
+    assert kde._logPG == pytest.approx(grid, abs=1e-9)
+    assert kde._logPK == pytest.approx(atCenters, abs=1e-9)
+
+
+def test_cached_densities_stay_accurate_over_a_long_run():
+    """Hopping between two wells while the weights grow, as a metastable OPES
+    run does. Partial cancellations compound over successive merges, and the
+    far tails of the grid drifted by orders of magnitude."""
+    kde = OnlineKDE(makeSpace((-3.0, 3.0, 41, False), (-3.0, 3.0, 41, False)))
+    rng = np.random.default_rng(0)
+    phases = 8
+    for phase in range(phases):
+        center = (-1.5, 1.5)[phase % 2]
+        for i in range(200):
+            position = np.clip(center + rng.normal(0, 0.5, 2), -2.9, 2.9)
+            logWeight = 20.0 * (phase + i / 200) / phases + rng.normal()
+            kde.update(position, logWeight, np.full(2, 0.09))
+    grid, atCenters = freshCaches(kde)
+    assert kde._logPG == pytest.approx(grid, abs=1e-6)
+    assert kde._logPK == pytest.approx(atCenters, abs=1e-6)
