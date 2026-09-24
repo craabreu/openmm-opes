@@ -99,7 +99,7 @@ class CVSpace:
             (self._widths - 1) * (position - self._lbounds) / self._lengths
         ).astype(int)
         if self._periodic:
-            indices[list(self._pdims)] %= self._widths[list(self._pdims)]
+            indices[list(self._pdims)] %= self._widths[list(self._pdims)] - 1
         indices = np.clip(indices, 0, self._widths - 1)
         return tuple(reversed(indices))
 
