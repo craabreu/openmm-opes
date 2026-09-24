@@ -81,7 +81,8 @@ class OPES:
         which is interpreted as the standard deviation of the UNBIASED
         distribution, exactly as both papers define sigma^(0).
     biasFactor: float, optional
-        Defaults to ``barrier / kT``.
+        Defaults to ``barrier / kT``. Must be finite: unlike PLUMED, the
+        uniform-target limit ``inf`` is not supported.
     exploreMode: bool
         Whether to apply the OPES-explore variant.
     bounded: bool
@@ -246,6 +247,8 @@ class OPES:
                 )
         if self.barrier <= 0 * unit.kilojoules_per_mole:
             raise ValueError("barrier must be positive")
+        if userSuppliedBiasFactor and not np.isfinite(biasFactor):
+            raise ValueError("biasFactor must be finite")
         if biasFactor <= 1.0:
             raise ValueError(
                 "biasFactor must be greater than 1"
