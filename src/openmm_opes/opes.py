@@ -16,6 +16,9 @@ from openmm import unit
 from .io import BiasSharer
 from .kde import CVSpace, OnlineKDE
 
+_SHARED_PREFIXES = {"": "kde", ".rw": "kdeRW"}
+_SAVED_PREFIXES = {"": "total", ".rw": "totalRW"}
+
 
 class RunningAverage:
     """Accumulates a running mean of per-CV squared deviations."""
@@ -84,7 +87,9 @@ class OPES:
         Defaults to ``barrier / kT``. Must be finite: unlike PLUMED, the
         uniform-target limit ``inf`` is not supported.
     exploreMode: bool
-        Whether to apply the OPES-explore variant.
+        Whether to apply the OPES-explore variant. Must match the mode of a
+        snapshot passed to :meth:`setState` and of every walker sharing
+        ``biasDir``.
     bounded: bool
         Whether non-periodic CVs have reflective boundaries.
     saveFrequency: int, optional
@@ -172,10 +177,13 @@ class OPES:
         self._compressionThreshold = compressionThreshold
         self._useExistingBandwidths = useExistingBandwidths
         self._kernelShape = kernelShape
-        self._kde = {}
-        for case in self._cases:
-            self._kde[case] = self._newKDE()
-            self._kde[f"{case}.rw"] = self._newKDE()
+        self._weightings = ("", ".rw") if exploreMode else (".rw",)
+        self._biasKey = "total" if exploreMode else "total.rw"
+        self._kde = {
+            case + weighting: self._newKDE()
+            for case in self._cases
+            for weighting in self._weightings
+        }
 
         self._adaptiveVariance = varianceFrequency is not None
         self._interval = varianceFrequency or frequency
@@ -277,7 +285,7 @@ class OPES:
 
     def getNumKernels(self) -> int:
         """Number of kernels in the estimate that defines the bias."""
-        return self._kde["total" if self.exploreMode else "total.rw"].getNumKernels()
+        return self._kde[self._biasKey].getNumKernels()
 
     def getBias(self):
         """The OPES bias potential on the grid.
@@ -288,7 +296,7 @@ class OPES:
         dominates, leaving the flat -barrier floor. Returning it explicitly
         keeps NaN out of the forces.
         """
-        kde = self._kde["total" if self.exploreMode else "total.rw"]
+        kde = self._kde[self._biasKey]
         if kde.getNumKernels() == 0:
             return self._prefactor * np.full(self._cvSpace.gridShape, self._logEpsilon)
         return self._prefactor * np.logaddexp(
@@ -317,7 +325,7 @@ class OPES:
 
         NaN until the first kernel is deposited, like :meth:`getFreeEnergy`.
         """
-        kde = self._kde["total" if self.exploreMode else "total.rw"]
+        kde = self._kde[self._biasKey]
         return np.exp(kde.getLogMeanDensity())
 
     def getCollectiveVariables(self, simulation):
@@ -363,14 +371,15 @@ class OPES:
                 stacklevel=2,
             )
             return False
-        logWeight = biasEnergy / self._kbt
-        factor = self._kde["total"].bandwidthFactor(0.0)
-        factorRW = self._kde["total.rw"].bandwidthFactor(logWeight)
-        for case in self._cases:
-            self._kde[case].update(values, 0.0, variance, factor)
-            self._kde[f"{case}.rw"].update(
-                values, logWeight, variance / self._biasFactor, factorRW
-            )
+        logWeights = {"": 0.0, ".rw": biasEnergy / self._kbt}
+        variances = {"": variance, ".rw": variance / self._biasFactor}
+        for weighting in self._weightings:
+            logWeight = logWeights[weighting]
+            factor = self._kde[f"total{weighting}"].bandwidthFactor(logWeight)
+            for case in self._cases:
+                self._kde[case + weighting].update(
+                    values, logWeight, variances[weighting], factor
+                )
         return True
 
     def _updateSampleStats(self, values) -> None:
@@ -389,14 +398,19 @@ class OPES:
         """
         assert self._sharer is not None
         self._sharer.save(self._getSharedState())
-        if not self._sharer.load():
+        updated = self._sharer.load()
+        if not updated:
             return False
-        self._kde["total"] = copy(self._kde["self"])
-        self._kde["total.rw"] = copy(self._kde["self.rw"])
+        for walkerId, state in updated.items():
+            self._checkMode(state, f"Walker {walkerId}")
+        for weighting in self._weightings:
+            self._kde[f"total{weighting}"] = copy(self._kde[f"self{weighting}"])
         self._variance["total"] = self._variance["self"].copy()
         for state in self._sharer.getLoadedStates().values():
-            self._kde["total"] += self._kdeFromState(state, "kde")
-            self._kde["total.rw"] += self._kdeFromState(state, "kdeRW")
+            for weighting in self._weightings:
+                self._kde[f"total{weighting}"] += self._kdeFromState(
+                    state, _SHARED_PREFIXES[weighting]
+                )
             peer = RunningAverage(len(self.variables))
             peer.setState({"num": state["var_num"], "total": state["var_total"]})
             self._variance["total"] += peer
@@ -404,13 +418,25 @@ class OPES:
 
     def _getSharedState(self) -> dict:
         state = {}
-        for prefix, key in (("kde", "self"), ("kdeRW", "self.rw")):
-            for name, value in self._kde[key].getState().items():
+        for weighting in self._weightings:
+            prefix = _SHARED_PREFIXES[weighting]
+            for name, value in self._kde[f"self{weighting}"].getState().items():
                 state[f"{prefix}_{name}"] = value
         variance = self._variance["self"].getState()
         state["var_num"] = variance["num"]
         state["var_total"] = variance["total"]
+        state["exploreMode"] = float(self.exploreMode)
         return state
+
+    def _checkMode(self, state, source) -> None:
+        if "exploreMode" not in state:
+            return
+        theirs = bool(float(state["exploreMode"]))
+        if theirs != self.exploreMode:
+            raise ValueError(
+                f"{source} uses exploreMode={theirs}, but this sampler uses "
+                f"exploreMode={self.exploreMode}"
+            )
 
     def _newKDE(self) -> OnlineKDE:
         """An empty KDE carrying this sampler's configured options."""
@@ -465,7 +491,7 @@ class OPES:
             return
         if self._adaptiveVariance:
             self._updateSampleStats(position)
-            if self._counter < self._tau and not self._kde["total"]:
+            if self._counter < self._tau and not self._kde[self._biasKey]:
                 return
         if simulation.currentStep % self.frequency == 0:
             groups = {self._force.getForceGroup()}
@@ -505,13 +531,15 @@ class OPES:
     def getState(self) -> dict:
         """Flat, npz-writable snapshot of this sampler's accumulated state."""
         state = self._getSharedState() if "self" in self._cases else {}
-        for prefix, key in (("total", "total"), ("totalRW", "total.rw")):
-            for name, value in self._kde[key].getState().items():
+        for weighting in self._weightings:
+            prefix = _SAVED_PREFIXES[weighting]
+            for name, value in self._kde[f"total{weighting}"].getState().items():
                 state[f"{prefix}_{name}"] = value
         variance = self._variance["total"].getState()
         state["totalVar_num"] = variance["num"]
         state["totalVar_total"] = variance["total"]
         state["warmupComplete"] = float(self._warmupComplete)
+        state["exploreMode"] = float(self.exploreMode)
         if hasattr(self, "_counter"):
             state["counter"] = float(self._counter)
             state["sampleMean"] = self._sampleMean.copy()
@@ -527,16 +555,21 @@ class OPES:
         :meth:`step`. Call :meth:`updateContext` to push it into a Context
         sooner, e.g. before computing energies.
         """
-        for prefix, key in (("total", "total"), ("totalRW", "total.rw")):
-            self._kde[key] = self._kdeFromState(state, prefix)
+        self._checkMode(state, "The snapshot")
+        for weighting in self._weightings:
+            self._kde[f"total{weighting}"] = self._kdeFromState(
+                state, _SAVED_PREFIXES[weighting]
+            )
         average = RunningAverage(len(self.variables))
         average.setState(
             {"num": state["totalVar_num"], "total": state["totalVar_total"]}
         )
         self._variance["total"] = average
         if "self" in self._cases and "var_num" in state:
-            for prefix, key in (("kde", "self"), ("kdeRW", "self.rw")):
-                self._kde[key] = self._kdeFromState(state, prefix)
+            for weighting in self._weightings:
+                self._kde[f"self{weighting}"] = self._kdeFromState(
+                    state, _SHARED_PREFIXES[weighting]
+                )
             own = RunningAverage(len(self.variables))
             own.setState({"num": state["var_num"], "total": state["var_total"]})
             self._variance["self"] = own
