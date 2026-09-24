@@ -218,7 +218,7 @@ def test_free_energy_always_uses_the_reweighted_estimate():
 
 
 def test_reweighted_kde_uses_variance_divided_by_the_bias_factor():
-    sampler = makeOPES()
+    sampler = makeOPES(exploreMode=True)
     sampler.addKernel(
         np.array([0.0]), 0.0 * unit.kilojoules_per_mole, variance=np.array([0.04])
     )
@@ -424,7 +424,7 @@ def test_set_state_preserves_kernel_shape_and_compression_threshold():
     )
     b.setState(a.getState())
 
-    restored = b._kde["total"]
+    restored = b._kde["total.rw"]
     assert restored._shape.name == "compact"
     assert restored._compressionThreshold == 0.0
     assert b.getBias().value_in_unit(unit.kilojoules_per_mole) == pytest.approx(
@@ -451,7 +451,7 @@ def test_set_state_restores_the_own_contribution_accumulators(tmp_path):
         biasDir=str(tmp_path),
     )
     runSteps(a, system, 2000)
-    assert a._kde["self"].getNumKernels() > 0
+    assert a._kde["self.rw"].getNumKernels() > 0
 
     system2, variable2 = makeHarmonicSystem()
     b = OPES(
@@ -465,7 +465,6 @@ def test_set_state_restores_the_own_contribution_accumulators(tmp_path):
         biasDir=str(tmp_path),
     )
     b.setState(a.getState())
-    assert b._kde["self"].getNumKernels() == a._kde["self"].getNumKernels()
     assert b._kde["self.rw"].getNumKernels() == a._kde["self.rw"].getNumKernels()
     assert b._variance["self"].get() == pytest.approx(a._variance["self"].get())
 
@@ -580,6 +579,7 @@ def test_a_sync_does_not_resize_the_walkers_own_kernels(tmp_path):
             biasDir=str(tmp_path),
             walkerId=walkerId,
             compressionThreshold=0.0,
+            exploreMode=True,
         )
 
     rng = np.random.default_rng(0)
@@ -656,7 +656,7 @@ def test_a_sync_that_loads_peer_kernels_refreshes_the_context(tmp_path):
     b._syncWithDisk()
     a, system = walker(1)
     runSteps(a, system, 100)
-    assert a._kde["total"].getNumKernels() == 2
+    assert a.getNumKernels() == 2
     tabulated = np.array(a._force.getTabulatedFunction(0).getFunctionParameters()[0])
     # the table stores V + barrier (see OPES.updateContext)
     bias = (a.getBias() + a.barrier).value_in_unit(unit.kilojoules_per_mole)
@@ -773,3 +773,16 @@ def test_a_restored_bias_reaches_the_context_before_the_first_step():
     assert seen.getPotentialEnergy().value_in_unit(
         unit.kilojoules_per_mole
     ) == pytest.approx(expected.value_in_unit(unit.kilojoules_per_mole), abs=1e-6)
+
+
+def test_only_explore_mode_keeps_an_unweighted_estimate(tmp_path):
+    """Outside explore mode nothing reads the unweighted estimate, so it is
+    neither built, shared, nor checkpointed."""
+    sampler = makeOPES(saveFrequency=100, biasDir=str(tmp_path))
+    sampler.addKernel([0.0], 0.0, variance=[0.01])
+    assert set(sampler._kde) == {"total.rw", "self.rw"}
+    assert not any(key.startswith(("total_", "kde_")) for key in sampler.getState())
+
+    explorer = makeOPES(exploreMode=True)
+    explorer.addKernel([0.0], 0.0, variance=[0.01])
+    assert set(explorer._kde) == {"total", "total.rw"}

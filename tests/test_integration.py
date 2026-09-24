@@ -194,11 +194,10 @@ def test_two_walkers_share_their_kernels(tmp_path):
         return sum(kernel.numSamples for kernel in kde._kernels)
 
     first, second = samplers
-    for total, own in (("total", "self"), ("total.rw", "self.rw")):
-        assert numSamples(second._kde[total]) == numSamples(
-            second._kde[own]
-        ) + numSamples(first._kde[own])
-        assert numSamples(first._kde[own]) > 0
+    assert numSamples(second._kde["total.rw"]) == numSamples(
+        second._kde["self.rw"]
+    ) + numSamples(first._kde["self.rw"])
+    assert numSamples(first._kde["self.rw"]) > 0
 
 
 def test_multiwalker_sync_does_not_corrupt_the_walkers_own_variance(tmp_path):
