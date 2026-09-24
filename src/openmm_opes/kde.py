@@ -298,6 +298,10 @@ class OnlineKDE:
         Either ``"gaussian"`` or ``"compact"``.
     """
 
+    #: How far, in log units, a cached density may fall below its peak since
+    #: the last rebuild before both caches are recomputed from scratch.
+    MAX_LOG_DROP = np.log(1e8)
+
     def __init__(
         self,
         cvSpace,
@@ -319,6 +323,8 @@ class OnlineKDE:
         self._logSumWSq = -np.inf
         self._logPK = np.empty(0)
         self._logPG = np.full(cvSpace.gridShape, -np.inf)
+        self._peakPK = self._logPK.copy()
+        self._peakPG = self._logPG.copy()
         self._d = cvSpace.numDimensions
 
     def __bool__(self) -> bool:
@@ -336,6 +342,8 @@ class OnlineKDE:
         new._logSumWSq = self._logSumWSq
         new._logPK = self._logPK.copy()
         new._logPG = self._logPG.copy()
+        new._peakPK = self._peakPK.copy()
+        new._peakPG = self._peakPG.copy()
         return new
 
     def __iadd__(self, other):
@@ -388,6 +396,7 @@ class OnlineKDE:
             self._logPG = self._logsubexp(self._logPG, kernel.evaluateOnGrid())
             removed.append(kernel)
         self._logPK = np.delete(self._logPK, toRemove)
+        self._peakPK = np.delete(self._peakPK, toRemove)
         return removed
 
     def _pushKernel(self, newKernel):
@@ -409,6 +418,8 @@ class OnlineKDE:
             index, minSqDist = newKernel.findNearest(centers, bandwidths(), toRemove)
         self._logPK = np.logaddexp(self._logPK, newKernel.evaluate(centers))
         self._logPG = np.logaddexp(self._logPG, newKernel.evaluateOnGrid())
+        self._peakPK = np.maximum(self._peakPK, self._logPK)
+        self._peakPG = np.maximum(self._peakPG, self._logPG)
         if toRemove:
             self._removeKernels(centers, toRemove)
         self._kernels.append(newKernel)
@@ -418,6 +429,40 @@ class OnlineKDE:
                 [k.evaluate(newKernel.position) for k in self._kernels]
             ),
         )
+        self._peakPK = np.append(self._peakPK, self._logPK[-1])
+        if toRemove and self._maxLogDrop() > self.MAX_LOG_DROP:
+            self._rebuildCaches()
+
+    def _maxLogDrop(self):
+        with np.errstate(invalid="ignore"):
+            return max(
+                np.nanmax(self._peakPK - self._logPK, initial=0.0),
+                np.nanmax(self._peakPG - self._logPG, initial=0.0),
+            )
+
+    def _rebuildCaches(self):
+        """Recompute the densities on the grid and at the kernel centers.
+
+        Subtracting a removed kernel loses precision where it held most of
+        the density, and the loss compounds over successive removals. The
+        rounding error of a cached value is bounded by machine epsilon times
+        its peak since the last rebuild, so _pushKernel rebuilds once any
+        value falls MAX_LOG_DROP below its peak.
+        """
+        self._logPG = functools.reduce(
+            np.logaddexp,
+            (k.evaluateOnGrid() for k in self._kernels),
+            np.full(self._cvSpace.gridShape, -np.inf),
+        )
+        if self._kernels:
+            centers = np.stack([k.position for k in self._kernels])
+            self._logPK = np.logaddexp.reduce(
+                np.stack([k.evaluate(centers) for k in self._kernels]), axis=0
+            )
+        else:
+            self._logPK = np.empty(0)
+        self._peakPK = self._logPK.copy()
+        self._peakPG = self._logPG.copy()
 
     def _addKernel(
         self, position, bandwidth, logWeight, numSamples=1, adjustBandwidth=True
@@ -433,8 +478,7 @@ class OnlineKDE:
             self._pushKernel(newKernel)
         else:
             self._kernels = [newKernel]
-            self._logPG = newKernel.evaluateOnGrid()
-            self._logPK = np.array([newKernel.evaluate(newKernel.position)])
+            self._rebuildCaches()
 
     def bandwidthFactor(self, logWeight) -> float:
         """Silverman shrink factor for a new kernel of the given log weight.
@@ -522,7 +566,6 @@ class OnlineKDE:
             "numSamples": numSamples,
             "logSumW": float(self._logSumW),
             "logSumWSq": float(self._logSumWSq),
-            "logPK": self._logPK.copy(),
         }
 
     def setState(self, state) -> None:
@@ -539,9 +582,4 @@ class OnlineKDE:
         ]
         self._logSumW = float(state["logSumW"])
         self._logSumWSq = float(state["logSumWSq"])
-        self._logPK = np.asarray(state["logPK"]).copy()
-        self._logPG = functools.reduce(
-            np.logaddexp,
-            (k.evaluateOnGrid() for k in self._kernels),
-            np.full(self._cvSpace.gridShape, -np.inf),
-        )
+        self._rebuildCaches()
