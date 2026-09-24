@@ -87,7 +87,9 @@ class OPES:
         Defaults to ``barrier / kT``. Must be finite: unlike PLUMED, the
         uniform-target limit ``inf`` is not supported.
     exploreMode: bool
-        Whether to apply the OPES-explore variant.
+        Whether to apply the OPES-explore variant. Must match the mode of a
+        snapshot passed to :meth:`setState` and of every walker sharing
+        ``biasDir``.
     bounded: bool
         Whether non-periodic CVs have reflective boundaries.
     saveFrequency: int, optional
@@ -396,8 +398,11 @@ class OPES:
         """
         assert self._sharer is not None
         self._sharer.save(self._getSharedState())
-        if not self._sharer.load():
+        updated = self._sharer.load()
+        if not updated:
             return False
+        for walkerId, state in updated.items():
+            self._checkMode(state, f"Walker {walkerId}")
         for weighting in self._weightings:
             self._kde[f"total{weighting}"] = copy(self._kde[f"self{weighting}"])
         self._variance["total"] = self._variance["self"].copy()
@@ -420,7 +425,18 @@ class OPES:
         variance = self._variance["self"].getState()
         state["var_num"] = variance["num"]
         state["var_total"] = variance["total"]
+        state["exploreMode"] = float(self.exploreMode)
         return state
+
+    def _checkMode(self, state, source) -> None:
+        if "exploreMode" not in state:
+            return
+        theirs = bool(float(state["exploreMode"]))
+        if theirs != self.exploreMode:
+            raise ValueError(
+                f"{source} uses exploreMode={theirs}, but this sampler uses "
+                f"exploreMode={self.exploreMode}"
+            )
 
     def _newKDE(self) -> OnlineKDE:
         """An empty KDE carrying this sampler's configured options."""
@@ -523,6 +539,7 @@ class OPES:
         state["totalVar_num"] = variance["num"]
         state["totalVar_total"] = variance["total"]
         state["warmupComplete"] = float(self._warmupComplete)
+        state["exploreMode"] = float(self.exploreMode)
         if hasattr(self, "_counter"):
             state["counter"] = float(self._counter)
             state["sampleMean"] = self._sampleMean.copy()
@@ -538,6 +555,7 @@ class OPES:
         :meth:`step`. Call :meth:`updateContext` to push it into a Context
         sooner, e.g. before computing energies.
         """
+        self._checkMode(state, "The snapshot")
         for weighting in self._weightings:
             self._kde[f"total{weighting}"] = self._kdeFromState(
                 state, _SAVED_PREFIXES[weighting]

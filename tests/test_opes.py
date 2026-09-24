@@ -786,3 +786,40 @@ def test_only_explore_mode_keeps_an_unweighted_estimate(tmp_path):
     explorer = makeOPES(exploreMode=True)
     explorer.addKernel([0.0], 0.0, variance=[0.01])
     assert set(explorer._kde) == {"total", "total.rw"}
+
+
+@pytest.mark.parametrize("exploreMode", [False, True])
+def test_set_state_rejects_a_snapshot_from_the_other_mode(exploreMode):
+    """The modes define the bias from different estimates, and only explore
+    mode checkpoints the unweighted one."""
+    source = makeOPES(exploreMode=exploreMode)
+    source.addKernel([0.0], 0.0, variance=[0.01])
+    target = makeOPES(exploreMode=not exploreMode)
+    with pytest.raises(ValueError, match="exploreMode"):
+        target.setState(source.getState())
+
+
+def test_set_state_accepts_a_snapshot_that_predates_the_mode_marker():
+    source = makeOPES()
+    source.addKernel([0.0], 0.0, variance=[0.01])
+    state = source.getState()
+    del state["exploreMode"]
+    target = makeOPES()
+    target.setState(state)
+    assert target.getNumKernels() == 1
+
+
+def test_walkers_sharing_a_directory_must_use_the_same_mode(tmp_path):
+    def walker(walkerId, exploreMode):
+        return makeOPES(
+            saveFrequency=100,
+            biasDir=str(tmp_path),
+            walkerId=walkerId,
+            exploreMode=exploreMode,
+        )
+
+    explorer, plain = walker(1, True), walker(2, False)
+    explorer.addKernel([0.0], 0.0, variance=[0.01])
+    explorer._syncWithDisk()
+    with pytest.raises(ValueError, match=r"Walker 1 uses exploreMode=True"):
+        plain._syncWithDisk()
