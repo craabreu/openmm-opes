@@ -512,9 +512,11 @@ class OnlineKDE:
 
         Computed from this estimate's effective sample size with the new
         kernel's weight already counted, which is what :meth:`update` applies.
+        The sample size also counts a prior weight w0 = 1, so kernels whose
+        weights are small next to it barely shrink the bandwidth.
         """
-        logSumW = np.logaddexp(self._logSumW, logWeight)
-        logSumWSq = np.logaddexp(self._logSumWSq, 2 * logWeight)
+        logSumW = np.logaddexp(0.0, np.logaddexp(self._logSumW, logWeight))
+        logSumWSq = np.logaddexp(0.0, np.logaddexp(self._logSumWSq, 2 * logWeight))
         neff = np.exp(2 * logSumW - logSumWSq)
         return (neff * (self._d + 2) / 4) ** (-1 / (self._d + 4))
 

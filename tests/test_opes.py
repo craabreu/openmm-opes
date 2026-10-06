@@ -325,8 +325,9 @@ def test_frozen_variance_is_gamma_times_the_measured_unbiased_variance():
     reweighted = sampler._kde["total.rw"]
     sampler.addKernel(np.array([0.0]), 0.0 * unit.kilojoules_per_mole)
     sigma0 = np.sqrt(sampler.getVariance() / sampler._biasFactor)
-    # Silverman still applies to the very first kernel, where Neff == 1
-    silverman = (1 * (1 + 2) / 4) ** (-1 / (1 + 4))
+    # Silverman still applies to the very first kernel, where w0 = w1 = 1
+    # give Neff = (1 + 1)**2 / (1 + 1) = 2
+    silverman = (2 * (1 + 2) / 4) ** (-1 / (1 + 4))
     assert reweighted._kernels[0].bandwidth[0] == pytest.approx(sigma0[0] * silverman)
 
 

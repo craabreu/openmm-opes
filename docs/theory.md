@@ -18,7 +18,8 @@ $V_{k-1}$.
 ## Bandwidth
 
 Bandwidths shrink as the effective sample size
-$N_{\text{eff}} = (\sum_k w_k)^2 / \sum_k w_k^2$ grows, by Silverman's rule:
+$N_{\text{eff}} = (\sum_{k=0}^n w_k)^2 / \sum_{k=0}^n w_k^2$, with $w_0 = 1$,
+grows, by Silverman's rule:
 
 $$\sigma_i^{(n)} = \sigma_i^{(0)}\left[N_{\text{eff}}^{(n)}(d+2)/4\right]^{-1/(d+4)}$$
 
