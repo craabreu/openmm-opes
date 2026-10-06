@@ -296,6 +296,9 @@ class OnlineKDE:
         kernels' bandwidths rather than the incoming kernel's.
     kernelShape
         Either ``"gaussian"`` or ``"compact"``.
+    minBandwidth
+        Per-CV floor on the bandwidth of new kernels, applied after the
+        Silverman shrink. Zero disables it.
     """
 
     #: How far, in log units, a cached density may fall below its peak since
@@ -308,6 +311,7 @@ class OnlineKDE:
         compressionThreshold: float = 1.0,
         useExistingBandwidths: bool = True,
         kernelShape: str = "gaussian",
+        minBandwidth=0.0,
     ):
         if kernelShape not in KERNEL_SHAPES:
             raise ValueError(
@@ -319,6 +323,9 @@ class OnlineKDE:
         self._useExistingBandwidths = useExistingBandwidths
         self._shape = KERNEL_SHAPES[kernelShape]
         self._d = cvSpace.numDimensions
+        self._minBandwidth = np.broadcast_to(
+            np.asarray(minBandwidth, dtype=float), (self._d,)
+        )
         self._setKernels([])
         self._logSumW = -np.inf
         self._logSumWSq = -np.inf
@@ -336,6 +343,7 @@ class OnlineKDE:
             self._compressionThreshold,
             self._useExistingBandwidths,
             self._shape.name,
+            self._minBandwidth,
         )
         new._setKernels(list(map(copy, self._kernels)))
         new._logSumW = self._logSumW
@@ -496,6 +504,7 @@ class OnlineKDE:
     ):
         if adjustBandwidth:
             bandwidth = bandwidth * self.bandwidthFactor(logWeight)
+        bandwidth = np.maximum(bandwidth, self._minBandwidth)
         self._logSumW = np.logaddexp(self._logSumW, logWeight)
         self._logSumWSq = np.logaddexp(self._logSumWSq, 2 * logWeight)
         newKernel = Kernel(

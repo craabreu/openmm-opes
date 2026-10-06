@@ -218,7 +218,7 @@ def test_free_energy_always_uses_the_reweighted_estimate():
 
 
 def test_reweighted_kde_uses_variance_divided_by_the_bias_factor():
-    sampler = makeOPES(exploreMode=True)
+    sampler = makeOPES(exploreMode=True, minBandwidth=[0.0])
     sampler.addKernel(
         np.array([0.0]), 0.0 * unit.kilojoules_per_mole, variance=np.array([0.04])
     )
@@ -319,7 +319,9 @@ def test_frozen_variance_is_gamma_times_the_measured_unbiased_variance():
     """Spec 7.7: warm-up measures an UNBIASED variance, while _variance holds
     a sampled one, so freezing stores gamma times the measurement."""
     system, variable = makeHarmonicSystem()
-    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10, warmupSteps=500)
+    sampler = OPES(
+        system, [variable], 300.0, 20.0, 100, 10, warmupSteps=500, minBandwidth=[0.0]
+    )
     runSteps(sampler, system, 500)
     assert sampler._warmupComplete
     reweighted = sampler._kde["total.rw"]
@@ -846,3 +848,22 @@ def test_a_peer_file_missing_keys_is_skipped_with_a_warning(tmp_path):
     with pytest.warns(UserWarning, match="lacks var_num"):
         assert not mine._syncWithDisk()
     assert mine.getNumKernels() == 1
+
+
+def test_kernels_are_floored_at_the_grid_spacing_by_default():
+    sampler = makeOPES()
+    sampler.addKernel([0.0], 0.0, variance=[1e-6])
+    (kernel,) = sampler._kde["total.rw"]._kernels
+    assert kernel.bandwidth[0] == pytest.approx(4.0 / 50)
+
+
+def test_an_explicit_minimum_bandwidth_replaces_the_grid_spacing():
+    sampler = makeOPES(minBandwidth=[0.0])
+    sampler.addKernel([0.0], 0.0, variance=[1e-6])
+    (kernel,) = sampler._kde["total.rw"]._kernels
+    assert kernel.bandwidth[0] < 4.0 / 50
+
+
+def test_a_fixed_bandwidth_below_the_minimum_is_rejected():
+    with pytest.raises(ValueError, match="minBandwidth"):
+        makeOPES(sigma=0.05, varianceFrequency=None)

@@ -23,6 +23,11 @@ grows, by Silverman's rule:
 
 $$\sigma_i^{(n)} = \sigma_i^{(0)}\left[N_{\text{eff}}^{(n)}(d+2)/4\right]^{-1/(d+4)}$$
 
+They never shrink below `minBandwidth`, which defaults to the grid spacing of
+each CV. The bias is tabulated on that grid, and a narrower kernel's forces
+are misrepresented by the interpolation, by up to 9% at one grid spacing and
+32% at 0.7. To resolve finer detail, increase `gridWidth`.
+
 ## Normalization
 
 $Z_n$ normalizes over the CV space explored so far, and is approximated by a
