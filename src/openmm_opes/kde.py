@@ -423,15 +423,25 @@ class OnlineKDE:
         if toRemove:
             self._removeKernels(centers, toRemove)
         self._kernels.append(newKernel)
-        self._logPK = np.append(
-            self._logPK,
-            np.logaddexp.reduce(
-                [k.evaluate(newKernel.position) for k in self._kernels]
-            ),
-        )
+        self._logPK = np.append(self._logPK, self._logDensityAt(newKernel.position))
         self._peakPK = np.append(self._peakPK, self._logPK[-1])
         if toRemove and self._maxLogDrop() > self.MAX_LOG_DROP:
             self._rebuildCaches()
+
+    def _logDensityAt(self, point):
+        """Log of the unnormalized mixture density at a single point.
+
+        Reflects the point rather than each kernel, which is equivalent (see
+        :meth:`CVSpace.mirrorPositions`) and lets every kernel be evaluated
+        in one call.
+        """
+        positions = np.stack([k.position for k in self._kernels])
+        bandwidths = np.stack([k.bandwidth for k in self._kernels])
+        logHeights = np.array([k.logHeight for k in self._kernels])
+        images = np.stack(self._cvSpace.mirrorPositions(point))
+        disp = self._cvSpace.displacement(positions, images[:, np.newaxis, :])
+        exponents = np.sum(self._shape.exponents(disp / bandwidths), axis=-1)
+        return np.logaddexp.reduce(logHeights + np.logaddexp.reduce(exponents))
 
     def _maxLogDrop(self):
         with np.errstate(invalid="ignore"):
@@ -537,10 +547,7 @@ class OnlineKDE:
 
     def evaluate(self, point) -> float:
         """Log of the normalized density at a single point."""
-        return (
-            np.logaddexp.reduce([k.evaluate(point) for k in self._kernels])
-            - self._logSumW
-        )
+        return self._logDensityAt(point) - self._logSumW
 
     def getState(self) -> dict:
         """Flat, npz-writable snapshot of this estimate.

@@ -378,3 +378,28 @@ def test_cached_densities_stay_accurate_over_a_long_run():
     grid, atCenters = freshCaches(kde)
     assert kde._logPG == pytest.approx(grid, abs=1e-6)
     assert kde._logPK == pytest.approx(atCenters, abs=1e-6)
+
+
+@pytest.mark.parametrize("kernelShape", ["gaussian", "compact"])
+@pytest.mark.parametrize(
+    "specs, bounded",
+    [
+        (((-3.0, 3.0, 31, False), (-3.0, 3.0, 31, False)), False),
+        (((-np.pi, np.pi, 31, True), (-np.pi, np.pi, 31, True)), False),
+        (((0.0, 1.0, 11, False), (-np.pi, np.pi, 31, True)), True),
+    ],
+)
+def test_point_density_is_the_sum_over_kernels(specs, bounded, kernelShape):
+    kde = OnlineKDE(
+        makeSpace(*specs, bounded=bounded),
+        compressionThreshold=0.0,
+        kernelShape=kernelShape,
+    )
+    lower = np.array([spec[0] for spec in specs])
+    upper = np.array([spec[1] for spec in specs])
+    rng = np.random.default_rng(3)
+    for _ in range(25):
+        kde.update(rng.uniform(lower, upper), rng.normal(), rng.uniform(0.01, 0.2, 2))
+    for point in [*rng.uniform(lower, upper, (10, 2)), lower, upper]:
+        direct = np.logaddexp.reduce([k.evaluate(point) for k in kde._kernels])
+        assert kde.evaluate(point) == pytest.approx(direct - kde._logSumW, abs=1e-12)
