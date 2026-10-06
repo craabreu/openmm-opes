@@ -51,6 +51,6 @@ jobs:
           python-version: "3.11"
       # mkdocstrings reads the source statically via griffe, so the docs build
       # needs neither openmm nor an importable package at runtime.
-      - run: pip install mkdocs-material "mkdocstrings[python]"
+      - run: pip install mkdocs-material "mkdocstrings[python]" mkdocs-jupyter
       - run: pip install --no-deps -e .
       - run: mkdocs gh-deploy --force

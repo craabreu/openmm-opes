@@ -24,6 +24,9 @@ fes = sampler.getFreeEnergy()
 
 Full documentation: <https://craabreu.github.io/openmm-opes>
 
+A worked example on alanine dipeptide runs in Google Colab:
+[docs/examples/alanine_dipeptide.ipynb](docs/examples/alanine_dipeptide.ipynb)
+
 ## Origin
 
 This library packages and hardens the prototype implementation developed in

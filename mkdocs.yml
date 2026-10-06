@@ -24,6 +24,8 @@ plugins:
             show_root_full_path: false
             merge_init_into_class: true
             separate_signature: true
+  - mkdocs-jupyter:
+      include_source: true
 
 markdown_extensions:
   - admonition
@@ -32,6 +34,7 @@ markdown_extensions:
   - pymdownx.superfences
 
 extra_javascript:
+  - javascripts/mathjax.js
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
 # Design documents live under docs/ but are not part of the published site.
@@ -42,4 +45,6 @@ nav:
   - Home: index.md
   - Quickstart: quickstart.md
   - Theory: theory.md
+  - Examples:
+      - Alanine dipeptide: examples/alanine_dipeptide.ipynb
   - API reference: api.md
