@@ -432,3 +432,24 @@ def test_kernel_arrays_mirror_the_kernel_list():
     restored = OnlineKDE(space)
     restored.setState(kde.getState())
     assertMirrored(restored)
+
+
+def test_bandwidth_factor_counts_a_unit_prior_weight():
+    """The effective sample size includes w0 = 1, so that it starts at one and
+    early kernels, whose weights e^(beta V) are tiny, keep their full width."""
+    kde = OnlineKDE(makeSpace((-4.0, 4.0, 41, False), (-4.0, 4.0, 41, False)))
+    rng = np.random.default_rng(2)
+    logWeights = rng.uniform(-20.0, 1.0, 30)
+    for logWeight in logWeights[:-1]:
+        kde.update(rng.normal(0, 1, 2), logWeight, np.full(2, 1.0))
+    weights = np.exp(logWeights)
+    neff = (1 + weights.sum()) ** 2 / (1 + (weights**2).sum())
+    expected = (neff * (2 + 2) / 4) ** (-1 / (2 + 4))
+    assert kde.bandwidthFactor(logWeights[-1]) == pytest.approx(expected)
+
+
+def test_new_kernels_are_floored_at_the_minimum_bandwidth():
+    space = makeSpace((-4.0, 4.0, 41, False), (-4.0, 4.0, 41, False))
+    kde = OnlineKDE(space, compressionThreshold=0.0, minBandwidth=[0.2, 0.05])
+    kde.update(np.zeros(2), 0.0, np.full(2, 0.01), factor=1.0)
+    assert kde._kernels[0].bandwidth == pytest.approx([0.2, 0.1])

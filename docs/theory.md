@@ -18,9 +18,15 @@ $V_{k-1}$.
 ## Bandwidth
 
 Bandwidths shrink as the effective sample size
-$N_{\text{eff}} = (\sum_k w_k)^2 / \sum_k w_k^2$ grows, by Silverman's rule:
+$N_{\text{eff}} = (\sum_{k=0}^n w_k)^2 / \sum_{k=0}^n w_k^2$, with $w_0 = 1$,
+grows, by Silverman's rule:
 
 $$\sigma_i^{(n)} = \sigma_i^{(0)}\left[N_{\text{eff}}^{(n)}(d+2)/4\right]^{-1/(d+4)}$$
+
+They never shrink below `minBandwidth`, which defaults to the grid spacing of
+each CV. The bias is tabulated on that grid, and a narrower kernel's forces
+are misrepresented by the interpolation, by up to 9% at one grid spacing and
+32% at 0.7. To resolve finer detail, increase `gridWidth`.
 
 ## Normalization
 

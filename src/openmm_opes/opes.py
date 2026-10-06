@@ -114,6 +114,10 @@ class OPES:
         Window, in deposition strides, of the running CV-mean estimate. With
         an adaptive variance, the first kernel also waits this many strides,
         so that it is sized from a measured variance.
+    minBandwidth: list of float, optional
+        Per-CV floor on the bandwidth of new kernels. Defaults to each
+        variable's grid spacing, below which the tabulated bias misrepresents
+        a kernel and its forces. Zero disables it.
     """
 
     def __init__(
@@ -135,6 +139,7 @@ class OPES:
         useExistingBandwidths: bool = True,
         kernelShape: str = "gaussian",
         statsWindowSize: int = 10,
+        minBandwidth=None,
     ):
         if not unit.is_quantity(temperature):
             temperature = temperature * unit.kelvin
@@ -153,6 +158,11 @@ class OPES:
         self.walkerId = walkerId
         self.warmupSteps = warmupSteps
         self.statsWindowSize = statsWindowSize
+        if minBandwidth is None:
+            minBandwidth = [
+                (v.maxValue - v.minValue) / (v.gridWidth - 1) for v in variables
+            ]
+        self.minBandwidth = np.asarray(minBandwidth, dtype=float)
 
         d = len(variables)
         kbt = unit.MOLAR_GAS_CONSTANT_R * temperature
@@ -273,6 +283,16 @@ class OPES:
             raise ValueError("OPES cannot handle mixed periodic/non-periodic variables")
         if not 1 <= d <= 3:
             raise ValueError("OPES requires 1, 2, or 3 collective variables")
+        if self.minBandwidth.shape != (d,) or np.any(self.minBandwidth < 0):
+            raise ValueError("minBandwidth must hold one non-negative value per CV")
+        if self.varianceFrequency is None and any(
+            v.biasWidth < floor
+            for v, floor in zip(self.variables, self.minBandwidth, strict=True)
+        ):
+            raise ValueError(
+                "biasWidth is below minBandwidth, which defaults to the grid "
+                "spacing; increase gridWidth or biasWidth, or lower minBandwidth"
+            )
         if not freeGroups:
             raise RuntimeError("OPES requires a free force group, but all are in use.")
 
@@ -454,6 +474,7 @@ class OPES:
             compressionThreshold=self._compressionThreshold,
             useExistingBandwidths=self._useExistingBandwidths,
             kernelShape=self._kernelShape,
+            minBandwidth=self.minBandwidth,
         )
 
     def _kdeFromState(self, state, prefix):

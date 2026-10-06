@@ -21,6 +21,10 @@ nearly all the density, leaving -inf or errors of tens of percent at log
 densities below about 40 under the peak. The port rebuilds its caches before
 that happens, so the grid is compared with the original only within
 TAIL_CUTOFF of the peak, and everywhere with a from-scratch recompute.
+
+The original's Silverman factor also lacks the prior weight w0 = 1 in the
+effective sample size, so each deposit is passed that original factor
+explicitly; the w0 version is pinned by test_kde instead.
 """
 
 from pathlib import Path
@@ -48,10 +52,16 @@ def test_matches_the_original_implementation(reference, name):
     positions, logWeights, variances = depositSequence(
         len(case.cvs), case.count, case.seed
     )
+    d = len(case.cvs)
+    logSumW = logSumWSq = -np.inf
     for position, logWeight, variance in zip(
         positions, logWeights, variances, strict=True
     ):
-        kde.update(position, logWeight, variance)
+        logSumW = np.logaddexp(logSumW, logWeight)
+        logSumWSq = np.logaddexp(logSumWSq, 2 * logWeight)
+        neff = np.exp(2 * logSumW - logSumWSq)
+        factor = (neff * (d + 2) / 4) ** (-1 / (d + 4))
+        kde.update(position, logWeight, variance, factor)
 
     assert kde.getNumKernels() == int(reference[f"{name}_numKernels"])
     logPDF = kde.getLogPDF()
