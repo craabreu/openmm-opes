@@ -318,14 +318,14 @@ class OnlineKDE:
         self._compressionThreshold = compressionThreshold
         self._useExistingBandwidths = useExistingBandwidths
         self._shape = KERNEL_SHAPES[kernelShape]
-        self._kernels: list[Kernel] = []
+        self._d = cvSpace.numDimensions
+        self._setKernels([])
         self._logSumW = -np.inf
         self._logSumWSq = -np.inf
         self._logPK = np.empty(0)
         self._logPG = np.full(cvSpace.gridShape, -np.inf)
         self._peakPK = self._logPK.copy()
         self._peakPG = self._logPG.copy()
-        self._d = cvSpace.numDimensions
 
     def __bool__(self) -> bool:
         return bool(self._kernels)
@@ -337,7 +337,7 @@ class OnlineKDE:
             self._useExistingBandwidths,
             self._shape.name,
         )
-        new._kernels = list(map(copy, self._kernels))
+        new._setKernels(list(map(copy, self._kernels)))
         new._logSumW = self._logSumW
         new._logSumWSq = self._logSumWSq
         new._logPK = self._logPK.copy()
@@ -389,24 +389,44 @@ class OnlineKDE:
         kernel from dominating the density at its own center.
         """
         toRemove = sorted(toRemove, reverse=True)
-        removed = []
-        for index in toRemove:
-            kernel = self._kernels.pop(index)
+        removed = [self._kernels[index] for index in toRemove]
+        for kernel in removed:
             self._logPK = self._logsubexp(self._logPK, kernel.evaluate(centers))
             self._logPG = self._logsubexp(self._logPG, kernel.evaluateOnGrid())
-            removed.append(kernel)
+        self._deleteKernels(toRemove)
         self._logPK = np.delete(self._logPK, toRemove)
         self._peakPK = np.delete(self._peakPK, toRemove)
         return removed
 
+    def _setKernels(self, kernels):
+        self._kernels = kernels
+        if kernels:
+            self._positions = np.stack([k.position for k in kernels])
+            self._bandwidths = np.stack([k.bandwidth for k in kernels])
+        else:
+            self._positions = np.empty((0, self._d))
+            self._bandwidths = np.empty((0, self._d))
+        self._logHeights = np.array([k.logHeight for k in kernels], dtype=float)
+
+    def _appendKernel(self, kernel):
+        self._kernels.append(kernel)
+        self._positions = np.vstack((self._positions, kernel.position))
+        self._bandwidths = np.vstack((self._bandwidths, kernel.bandwidth))
+        self._logHeights = np.append(self._logHeights, kernel.logHeight)
+
+    def _deleteKernels(self, indices):
+        for index in sorted(indices, reverse=True):
+            del self._kernels[index]
+        self._positions = np.delete(self._positions, indices, axis=0)
+        self._bandwidths = np.delete(self._bandwidths, indices, axis=0)
+        self._logHeights = np.delete(self._logHeights, indices)
+
     def _pushKernel(self, newKernel):
-        centers = np.stack([k.position for k in self._kernels])
+        centers = self._positions
 
         def bandwidths():
             return (
-                np.stack([k.bandwidth for k in self._kernels])
-                if self._useExistingBandwidths
-                else newKernel.bandwidth
+                self._bandwidths if self._useExistingBandwidths else newKernel.bandwidth
             )
 
         threshold = self._compressionThreshold
@@ -422,7 +442,7 @@ class OnlineKDE:
         self._peakPG = np.maximum(self._peakPG, self._logPG)
         if toRemove:
             self._removeKernels(centers, toRemove)
-        self._kernels.append(newKernel)
+        self._appendKernel(newKernel)
         self._logPK = np.append(self._logPK, self._logDensityAt(newKernel.position))
         self._peakPK = np.append(self._peakPK, self._logPK[-1])
         if toRemove and self._maxLogDrop() > self.MAX_LOG_DROP:
@@ -435,13 +455,10 @@ class OnlineKDE:
         :meth:`CVSpace.mirrorPositions`) and lets every kernel be evaluated
         in one call.
         """
-        positions = np.stack([k.position for k in self._kernels])
-        bandwidths = np.stack([k.bandwidth for k in self._kernels])
-        logHeights = np.array([k.logHeight for k in self._kernels])
         images = np.stack(self._cvSpace.mirrorPositions(point))
-        disp = self._cvSpace.displacement(positions, images[:, np.newaxis, :])
-        exponents = np.sum(self._shape.exponents(disp / bandwidths), axis=-1)
-        return np.logaddexp.reduce(logHeights + np.logaddexp.reduce(exponents))
+        disp = self._cvSpace.displacement(self._positions, images[:, np.newaxis, :])
+        exponents = np.sum(self._shape.exponents(disp / self._bandwidths), axis=-1)
+        return np.logaddexp.reduce(self._logHeights + np.logaddexp.reduce(exponents))
 
     def _maxLogDrop(self):
         with np.errstate(invalid="ignore"):
@@ -465,9 +482,9 @@ class OnlineKDE:
             np.full(self._cvSpace.gridShape, -np.inf),
         )
         if self._kernels:
-            centers = np.stack([k.position for k in self._kernels])
             self._logPK = np.logaddexp.reduce(
-                np.stack([k.evaluate(centers) for k in self._kernels]), axis=0
+                np.stack([k.evaluate(self._positions) for k in self._kernels]),
+                axis=0,
             )
         else:
             self._logPK = np.empty(0)
@@ -487,7 +504,7 @@ class OnlineKDE:
         if self._kernels:
             self._pushKernel(newKernel)
         else:
-            self._kernels = [newKernel]
+            self._setKernels([newKernel])
             self._rebuildCaches()
 
     def bandwidthFactor(self, logWeight) -> float:
@@ -555,38 +572,31 @@ class OnlineKDE:
         The CVSpace is deliberately excluded: all walkers share identical CV
         definitions, so a reader constructs its own and calls setState.
         """
-        d = self._cvSpace.numDimensions
-        if self._kernels:
-            positions = np.stack([k.position for k in self._kernels])
-            bandwidths = np.stack([k.bandwidth for k in self._kernels])
-            logWeights = np.array([k.logWeight for k in self._kernels])
-            numSamples = np.array([k.numSamples for k in self._kernels])
-        else:
-            positions = np.empty((0, d))
-            bandwidths = np.empty((0, d))
-            logWeights = np.empty(0)
-            numSamples = np.empty(0, dtype=int)
         return {
-            "positions": positions,
-            "bandwidths": bandwidths,
-            "logWeights": logWeights,
-            "numSamples": numSamples,
+            "positions": self._positions.copy(),
+            "bandwidths": self._bandwidths.copy(),
+            "logWeights": np.array([k.logWeight for k in self._kernels], dtype=float),
+            "numSamples": np.array([k.numSamples for k in self._kernels], dtype=int),
             "logSumW": float(self._logSumW),
             "logSumWSq": float(self._logSumWSq),
         }
 
     def setState(self, state) -> None:
         """Restore from a :meth:`getState` snapshot, discarding current contents."""
-        self._kernels = [
-            Kernel(self._cvSpace, position, bandwidth, logWeight, int(n), self._shape)
-            for position, bandwidth, logWeight, n in zip(
-                state["positions"],
-                state["bandwidths"],
-                state["logWeights"],
-                state["numSamples"],
-                strict=True,
-            )
-        ]
+        self._setKernels(
+            [
+                Kernel(
+                    self._cvSpace, position, bandwidth, logWeight, int(n), self._shape
+                )
+                for position, bandwidth, logWeight, n in zip(
+                    state["positions"],
+                    state["bandwidths"],
+                    state["logWeights"],
+                    state["numSamples"],
+                    strict=True,
+                )
+            ]
+        )
         self._logSumW = float(state["logSumW"])
         self._logSumWSq = float(state["logSumWSq"])
         self._rebuildCaches()

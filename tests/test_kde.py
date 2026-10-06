@@ -1,3 +1,5 @@
+from copy import copy
+
 import numpy as np
 import pytest
 
@@ -403,3 +405,30 @@ def test_point_density_is_the_sum_over_kernels(specs, bounded, kernelShape):
     for point in [*rng.uniform(lower, upper, (10, 2)), lower, upper]:
         direct = np.logaddexp.reduce([k.evaluate(point) for k in kde._kernels])
         assert kde.evaluate(point) == pytest.approx(direct - kde._logSumW, abs=1e-12)
+
+
+def test_kernel_arrays_mirror_the_kernel_list():
+    def assertMirrored(kde):
+        kernels = kde._kernels
+        assert kde._positions == pytest.approx(np.stack([k.position for k in kernels]))
+        assert kde._bandwidths == pytest.approx(
+            np.stack([k.bandwidth for k in kernels])
+        )
+        assert kde._logHeights == pytest.approx([k.logHeight for k in kernels])
+
+    space = makeSpace((-3.0, 3.0, 31, False), (-np.pi, np.pi, 31, True))
+    kde = OnlineKDE(space)
+    rng = np.random.default_rng(5)
+    for _ in range(200):
+        kde.update(rng.normal(0, 1, 2), rng.normal(), np.full(2, 0.3))
+    assert 1 < kde.getNumKernels() < 200
+    assertMirrored(kde)
+    clone = copy(kde)
+    clone.update(np.zeros(2), 0.0, np.full(2, 0.3))
+    assertMirrored(clone)
+    assertMirrored(kde)
+    kde += clone
+    assertMirrored(kde)
+    restored = OnlineKDE(space)
+    restored.setState(kde.getState())
+    assertMirrored(restored)
