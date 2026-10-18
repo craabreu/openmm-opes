@@ -82,3 +82,23 @@ each variable's `biasWidth`. It is read as $\sigma^{(0)}$, the standard
 deviation of the **unbiased** distribution, in both modes. OPES-explore
 kernels estimate the sampled distribution, which is $\sqrt{\gamma}$ times
 wider, so they are deposited $\sqrt{\gamma}$ times wider than `biasWidth`.
+
+## Several samplers at once
+
+Several samplers can bias the same simulation, each depositing kernels on its
+own schedule and weighting them by its own bias only, as several OPES actions
+do in a single PLUMED input. Create them all on the same `System` and advance
+the simulation with `OPES.stepTogether`. For example, OPES and OPES-explore
+combined (Ray & Rizzi, J. Chem. Theory Comput. 21, 58 (2025)):
+
+```python
+opes = OPES(system, [cv1, cv2], temperature, 55, 500, 50)
+explore = OPES(system, [cv1Copy], temperature, 30, 500, 50, exploreMode=True)
+simulation = app.Simulation(topology, system, integrator)
+...
+OPES.stepTogether(simulation, [opes, explore], 1_000_000)
+```
+
+Each variable's force is copied into its sampler's bias force, so pass every
+sampler its own `BiasVariable` objects. To reweight, add up the biases, which
+`getBiasEnergy(simulation.context)` returns for each sampler.

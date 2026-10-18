@@ -235,3 +235,86 @@ def test_multiwalker_sync_does_not_corrupt_the_walkers_own_variance(tmp_path):
     own = sampler._variance["self"].get().copy()
     sampler._syncWithDisk()
     assert sampler._variance["self"].get() == pytest.approx(own)
+
+
+def twoSamplerSimulation(seed=1234):
+    """OPES and OPES-explore biasing the same double-well coordinate."""
+    system, variable = doubleWellSystem(gridWidth=61)
+    _, exploreVariable = doubleWellSystem(gridWidth=61)
+    opes = OPES(system, [variable], TEMPERATURE, 30.0, 200, 20, bounded=True)
+    explore = OPES(
+        system, [exploreVariable], TEMPERATURE, 15.0, 100, 20, exploreMode=True
+    )
+    integrator = openmm.LangevinMiddleIntegrator(
+        TEMPERATURE * unit.kelvin, 10.0 / unit.picosecond, 0.002 * unit.picoseconds
+    )
+    integrator.setRandomNumberSeed(seed)
+    topology = app.Topology()
+    topology.addAtom("A", None, topology.addResidue("M", topology.addChain()))
+    simulation = app.Simulation(
+        topology, system, integrator, openmm.Platform.getPlatformByName("Reference")
+    )
+    simulation.context.setPositions([openmm.Vec3(-1.0, 0, 0)])
+    simulation.context.setVelocitiesToTemperature(TEMPERATURE * unit.kelvin, seed + 1)
+    return simulation, opes, explore
+
+
+def test_step_together_drives_every_sampler():
+    simulation, opes, explore = twoSamplerSimulation()
+    for _ in range(10):
+        OPES.stepTogether(simulation, [opes, explore], 1000)
+    assert simulation.currentStep == 10000
+    assert opes.getNumKernels() > 0
+    assert explore.getNumKernels() > 0
+    for sampler in (opes, explore):
+        bias = sampler.getBias().value_in_unit(unit.kilojoules_per_mole)
+        assert np.all(np.isfinite(bias))
+
+
+def test_step_together_stops_at_every_sampler_interval():
+    """Uneven chunks must neither skip nor repeat an interval of any sampler."""
+    simulation, opes, explore = twoSamplerSimulation()
+    explore._interval = 30  # make the two schedules differ
+    calls = {id(opes): [], id(explore): []}
+    for sampler in (opes, explore):
+        original = sampler._onInterval
+
+        def record(simulation, sampler=sampler, original=original):
+            calls[id(sampler)].append(simulation.currentStep)
+            original(simulation)
+
+        sampler._onInterval = record
+    for chunk in (7, 333, 1, 1659):
+        OPES.stepTogether(simulation, [opes, explore], chunk)
+    assert simulation.currentStep == 2000
+    assert calls[id(opes)] == list(range(20, 2001, 20))
+    assert calls[id(explore)] == list(range(30, 2001, 30))
+
+
+def test_step_is_step_together_with_a_single_sampler(monkeypatch):
+    simulation, opes, _ = twoSamplerSimulation()
+    seen = []
+    monkeypatch.setattr(
+        OPES, "stepTogether", staticmethod(lambda *args: seen.append(args))
+    )
+    opes.step(simulation, 123)
+    assert seen == [(simulation, [opes], 123)]
+
+
+def test_step_together_rejects_repeated_samplers():
+    simulation, opes, _ = twoSamplerSimulation()
+    with pytest.raises(ValueError, match="distinct"):
+        OPES.stepTogether(simulation, [opes, opes], 100)
+
+
+def test_bias_energy_matches_the_tabulated_bias_at_the_current_cv():
+    simulation, opes, explore = twoSamplerSimulation()
+    OPES.stepTogether(simulation, [opes, explore], 5000)
+    for sampler in (opes, explore):
+        x = sampler.getCollectiveVariables(simulation)[0]
+        grid = np.linspace(-2, 2, 61)
+        bias = sampler.getBias().value_in_unit(unit.kilojoules_per_mole)
+        energy = sampler.getBiasEnergy(simulation.context)
+        assert energy.value_in_unit(unit.kilojoules_per_mole) == pytest.approx(
+            np.interp(x, grid, bias), abs=0.5
+        )
