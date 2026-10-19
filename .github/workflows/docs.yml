@@ -1,0 +1,85 @@
+name: Docs
+
+# Versioned documentation on GitHub Pages, managed with mike:
+#   push to main        -> development
+#   published release   -> <tag>
+#   manual dispatch     -> rebuild an existing release tag
+# The alias latest, which the site root redirects to, follows GitHub's latest
+# release, so rebuilding an older tag does not move it backwards. Pull
+# requests only build the site, to catch errors. Prereleases are skipped.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to rebuild, such as v0.2.0"
+        required: true
+
+# Deployments push to gh-pages one at a time, in order.
+concurrency:
+  group: docs-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: false
+
+jobs:
+  docs:
+    if: github.event_name != 'release' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # mkdocstrings reads the source statically via griffe, so the docs build
+      # needs neither openmm nor an importable package at runtime.
+      - run: pip install mkdocs-material "mkdocstrings[python]" mike
+      - run: pip install --no-deps -e .
+      - run: mkdocs build --strict
+
+      - name: Deploy
+        if: github.event_name != 'pull_request'
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin gh-pages:gh-pages || true
+          # gh-pages used to hold one unversioned site at its root. Clear it
+          # once, before the first versioned deployment.
+          if git rev-parse --verify -q gh-pages >/dev/null \
+              && ! git cat-file -e gh-pages:versions.json 2>/dev/null; then
+            git worktree add -q pages gh-pages
+            git -C pages rm -rq .
+            touch pages/.nojekyll
+            git -C pages add .nojekyll
+            git -C pages commit -qm "Remove the unversioned site"
+            git worktree remove pages
+          fi
+          if [ -n "$RELEASE_TAG" ]; then
+            latest_release=$(gh release view --json tagName --jq .tagName)
+            if [ "$RELEASE_TAG" = "$latest_release" ]; then
+              # A full copy, as GitHub Pages does not serve symlinks reliably
+              mike deploy --alias-type copy --update-aliases "$RELEASE_TAG" latest
+              mike set-default latest
+            else
+              mike deploy "$RELEASE_TAG"
+            fi
+          else
+            mike deploy development
+            # Until the first versioned release, the site root shows development.
+            if ! mike list | grep -qw latest; then
+              mike set-default development
+            fi
+          fi
+          git push origin gh-pages

@@ -31,6 +31,12 @@ markdown_extensions:
   - pymdownx.highlight
   - pymdownx.superfences
 
+# Versions are deployed with mike (see .github/workflows/docs.yml), which also
+# feeds Material's version selector.
+extra:
+  version:
+    provider: mike
+
 extra_javascript:
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
