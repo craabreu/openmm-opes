@@ -166,3 +166,60 @@ def test_per_axis_folding_matches_folding_the_full_tripled_grid(specs, shape):
         np.testing.assert_allclose(
             kernel.evaluateOnGrid(), full, rtol=1e-12, atol=1e-12
         )
+
+
+def bruteForceLogKernel(kernel, points):
+    """Sum a kernel over every mirror image of its center, as mirrorPositions lists."""
+    space = kernel.cvSpace
+    terms = [
+        np.sum(
+            kernel.shape.exponents(
+                space.displacement(image, np.asarray(points)) / kernel.bandwidth
+            ),
+            axis=-1,
+        )
+        for image in space.mirrorPositions(kernel.position)
+    ]
+    return kernel.logHeight + np.logaddexp.reduce(terms, axis=0)
+
+
+@pytest.mark.parametrize(
+    "specs",
+    [
+        ((-1.0, 2.0, 31, False),),
+        ((-1.0, 2.0, 31, False), (0.0, 0.5, 21, False)),
+        ((-np.pi, np.pi, 25, True), (0.0, 0.5, 21, False)),
+        ((-1.0, 2.0, 11, False), (0.0, 0.5, 9, False), (-np.pi, np.pi, 7, True)),
+    ],
+)
+@pytest.mark.parametrize("bounded", [True, False])
+@pytest.mark.parametrize("shape", ["gaussian", "compact"])
+def test_per_axis_point_evaluation_matches_summing_every_image(specs, bounded, shape):
+    from openmm_opes.kde import KERNEL_SHAPES, OnlineKDE
+
+    space = makeSpace(*specs, bounded=bounded)
+    rng = np.random.default_rng(5)
+    points = np.array(
+        [[rng.uniform(lo, hi) for lo, hi, _, _ in specs] for _ in range(50)]
+    )
+    kde = OnlineKDE(space, compressionThreshold=0.0, kernelShape=shape)
+    for _ in range(6):
+        position = np.array([rng.uniform(lo, hi) for lo, hi, _, _ in specs])
+        bandwidth = np.array(
+            [0.05 + 0.3 * rng.random() * (hi - lo) for lo, hi, _, _ in specs]
+        )
+        kernel = Kernel(
+            space, position, bandwidth, rng.normal(), shape=KERNEL_SHAPES[shape]
+        )
+        np.testing.assert_allclose(
+            kernel.evaluate(points),
+            bruteForceLogKernel(kernel, points),
+            rtol=1e-12,
+            atol=1e-12,
+        )
+        kde.update(position, rng.normal(), bandwidth**2, 1.0)
+    for point in points[:10]:
+        brute = np.logaddexp.reduce(
+            [bruteForceLogKernel(k, point) for k in kde._kernels]
+        )
+        assert kde._logDensityAt(point) == pytest.approx(brute, rel=1e-12, abs=1e-12)

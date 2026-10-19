@@ -453,3 +453,26 @@ def test_new_kernels_are_floored_at_the_minimum_bandwidth():
     kde = OnlineKDE(space, compressionThreshold=0.0, minBandwidth=[0.2, 0.05])
     kde.update(np.zeros(2), 0.0, np.full(2, 0.01), factor=1.0)
     assert kde._kernels[0].bandwidth == pytest.approx([0.2, 0.1])
+
+
+@pytest.mark.parametrize("bounded", [True, False])
+@pytest.mark.parametrize("shape", ["gaussian", "compact"])
+def test_densities_at_centers_match_evaluating_every_kernel(bounded, shape):
+    """The chunked, per-axis cache rebuild agrees with a kernel-by-kernel sum,
+    across more kernels than one chunk holds."""
+    space = makeSpace(
+        (-1.0, 2.0, 31, False), (-np.pi, np.pi, 25, True), bounded=bounded
+    )
+    kde = OnlineKDE(space, compressionThreshold=0.0, kernelShape=shape)
+    rng = np.random.default_rng(9)
+    for _ in range(OnlineKDE.CHUNK_SIZE + 37):
+        position = np.array([rng.uniform(-1, 2), rng.uniform(-np.pi, np.pi)])
+        kde.update(
+            position, rng.normal(), np.array([0.04, 0.1]) * rng.uniform(0.2, 2), 1.0
+        )
+    expected = np.logaddexp.reduce(
+        np.stack([k.evaluate(kde._positions) for k in kde._kernels]), axis=0
+    )
+    np.testing.assert_allclose(
+        kde._logDensitiesAtCenters(), expected, rtol=1e-12, atol=1e-12
+    )
