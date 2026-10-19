@@ -102,11 +102,13 @@ e^{-\beta V_t(\mathbf{s})}\,d\mathbf{s}}{\int P(\mathbf{s})\,d\mathbf{s}}$$
 
 `getCt()` evaluates this on the grid with $P_n$ in place of $P$. It is
 unbiased once $P_n$ is, but wrong while $P_n$ still misses basins.
-`getCt("running")` is PLUMED's `rct`, $\beta^{-1}\ln(\sum_k w_k / n)$, the
-mean weight of all samples so far. It needs no density estimate but lags
-behind the current bias, since it averages over past ones. On alanine
-dipeptide, the current-bias estimate is the more accurate one after about
-2 ns.
+`getCt("running")` is PLUMED's `rct`,
+$\beta^{-1}\ln[(w_0 + \sum_k w_k) / (n + 1)]$, the mean weight of all
+samples so far plus one fictitious sample under the initial flat bias,
+$w_0 = e^{-\beta\Delta E}$. It lags behind the current bias, since it
+averages over past ones, and PLUMED advises against reweighting with it: use
+it to check that the bias has converged. On alanine dipeptide, the
+current-bias estimate is the more accurate one after about 2 ns.
 
 ## Kernel compression
 

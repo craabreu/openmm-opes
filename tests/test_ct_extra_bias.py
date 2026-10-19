@@ -156,12 +156,14 @@ def test_in_explore_mode_only_the_reweighted_estimate_sees_the_extra_bias():
     )
 
 
-def test_running_ct_is_kT_ln_of_the_mean_kernel_weight(monkeypatch):
+def test_running_ct_matches_plumeds_rct(monkeypatch):
     system, _ = doubleWell()
     sampler = OPES(system, [variable()], TEMPERATURE, 30.0, 100, None, extraBias=[5])
     weights = recordWeights(sampler, monkeypatch)
     sampler.step(simulate(system), 3000)
-    expected = KT * np.log(np.mean(np.exp(np.array(weights) / KT)))
+    # PLUMED's rct: one extra sample under the initial flat bias, -barrier
+    allWeights = np.append(np.array(weights), -30.0)
+    expected = KT * np.log(np.mean(np.exp(allWeights / KT)))
     assert sampler.getCt("running").value_in_unit(KJ) == pytest.approx(expected)
 
 
@@ -179,11 +181,12 @@ def test_current_ct_averages_exp_minus_beta_v_over_the_estimate(periodic):
     assert sampler.getCt().value_in_unit(KJ) == pytest.approx(expected)
 
 
-def test_ct_is_nan_before_the_first_kernel_and_checks_its_argument():
+def test_ct_before_the_first_kernel_and_its_argument_check():
     system, _ = doubleWell()
     sampler = OPES(system, [variable()], TEMPERATURE, 30.0, 100, None)
     assert np.isnan(sampler.getCt().value_in_unit(KJ))
-    assert np.isnan(sampler.getCt("running").value_in_unit(KJ))
+    # PLUMED's rct starts from the initial sample alone: the flat bias
+    assert sampler.getCt("running").value_in_unit(KJ) == pytest.approx(-30.0)
     with pytest.raises(ValueError, match="estimate must be"):
         sampler.getCt("final")
 
@@ -229,7 +232,8 @@ def test_combined_ct_uses_the_total_bias_and_the_free_energy_estimate(monkeypatc
     explore = combined._components["explore"]
     weights = recordWeights(explore, monkeypatch)
     combined.step(simulate(system), 3000)
-    expected = KT * np.log(np.mean(np.exp(np.array(weights) / KT)))
+    allWeights = np.append(np.array(weights), -(30.0 + 15.0))
+    expected = KT * np.log(np.mean(np.exp(allWeights / KT)))
     assert combined.getCt("running").value_in_unit(KJ) == pytest.approx(expected)
     fes = combined.getFreeEnergy().value_in_unit(KJ)
     bias = combined.getBias().value_in_unit(KJ)

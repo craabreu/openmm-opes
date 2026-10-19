@@ -10,7 +10,7 @@ import numpy as np
 import openmm as mm
 from openmm import app, unit
 
-from .opes import OPES, ExtraBias, currentCt, tabulatedFunction
+from .opes import OPES, ExtraBias, currentCt, runningCt, tabulatedFunction
 
 _COMPONENTS = ("opes", "explore")
 
@@ -285,11 +285,13 @@ class CombinedOPES:
 
         ``"current"`` averages exp(-beta V) over the free energy estimate of
         :meth:`getFreeEnergy`; ``"running"`` is kT ln of the mean weight of its
-        samples. See :meth:`OPES.getCt`.
+        samples, with an initial sample under the flat bias
+        -(barrier + exploreBarrier). See :meth:`OPES.getCt`.
         """
         explore = self._components["explore"]
         if estimate == "running":
-            return explore.getCt("running")
+            initial = -(self.barrier + self.exploreBarrier)
+            return runningCt(explore._kde["total.rw"], initial, explore._kbt)
         if estimate == "current":
             return currentCt(
                 explore._kde["total.rw"].getLogPDF(),

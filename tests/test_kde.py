@@ -478,13 +478,15 @@ def test_densities_at_centers_match_evaluating_every_kernel(bounded, shape):
     )
 
 
-def test_log_mean_weight_survives_merging():
+def test_sample_count_and_total_weight_survive_merging():
     kde = OnlineKDE(makeSpace((-4.0, 4.0, 41, False)), compressionThreshold=3.0)
-    assert np.isnan(kde.getLogMeanWeight())
+    assert kde.getNumSamples() == 0
+    assert kde.getLogSumWeights() == -np.inf
     rng = np.random.default_rng(3)
     logWeights = rng.normal(size=50)
     for logWeight in logWeights:
         kde.update(np.array([rng.normal(scale=0.3)]), logWeight, np.array([0.25]))
     assert kde.getNumKernels() < len(logWeights)  # some kernels were merged
-    expected = np.log(np.mean(np.exp(logWeights)))
-    assert kde.getLogMeanWeight() == pytest.approx(expected, abs=1e-12)
+    assert kde.getNumSamples() == len(logWeights)
+    expected = np.log(np.sum(np.exp(logWeights)))
+    assert kde.getLogSumWeights() == pytest.approx(expected, abs=1e-12)

@@ -79,6 +79,20 @@ def currentCt(logPDF, bias, kbt, periodic):
     return c * unit.kilojoules_per_mole
 
 
+def runningCt(kde, initialBias, kbt):
+    """PLUMED's rct: kT ln of the mean sample weight, from a reweighted KDE.
+
+    As in PLUMED, the average includes one fictitious sample weighted by the
+    initial, flat bias, w_0 = exp(beta V_0), which keeps it defined from the
+    start.
+    """
+    beta = 1 / kbt.value_in_unit(unit.kilojoules_per_mole)
+    logW0 = beta * initialBias.value_in_unit(unit.kilojoules_per_mole)
+    logSum = np.logaddexp(logW0, kde.getLogSumWeights())
+    c = (logSum - np.log(kde.getNumSamples() + 1)) / beta
+    return c * unit.kilojoules_per_mole
+
+
 class ExtraBias:
     """Energies of other biases acting on a simulation, for reweighting.
 
@@ -195,8 +209,9 @@ class OPES:
         sample is weighted by exp(beta (V + V_extra)), so that the free energy
         estimate removes them too. Items are force groups, Forces, or objects
         with a ``getBiasEnergy(context)`` method, such as other samplers. The
-        bias itself still follows the density estimate as usual; in explore
-        mode, only the reweighted estimate changes.
+        bias itself still follows the density estimate as usual. In explore
+        mode, only the reweighted estimate changes; PLUMED offers EXTRA_BIAS
+        for OPES_METAD only.
     """
 
     def __init__(
@@ -426,16 +441,19 @@ class OPES:
         * ``"current"``: -kT ln <exp(-beta V_n)> over the reweighted density
           estimate P_n, for the bias acting now. It needs a reasonable P_n
           and is then unbiased.
-        * ``"running"``: kT ln of the mean kernel weight, sum_k w_k / n, as
-          PLUMED's ``rct`` component. It averages over past biases, so it
-          lags behind the current one, but needs no density estimate. With
-          ``extraBias``, the weights include the extra biases.
+        * ``"running"``: PLUMED's ``rct`` component, kT ln of the mean weight
+          of all samples so far, including one fictitious sample under the
+          initial flat bias -barrier. It averages over past biases, so it
+          lags behind the current one. Like PLUMED, which warns against
+          reweighting with ``rct``, treat it as a convergence diagnostic: it
+          should level off as the bias converges. With ``extraBias``, the
+          weights include the extra biases.
 
-        NaN before the first kernel.
+        The current estimate is NaN before the first kernel.
         """
         kde = self._kde["total.rw"]
         if estimate == "running":
-            return self._kbt * kde.getLogMeanWeight()
+            return runningCt(kde, -self.barrier, self._kbt)
         if estimate == "current":
             return currentCt(
                 kde.getLogPDF(),

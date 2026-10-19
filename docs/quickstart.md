@@ -100,8 +100,12 @@ sampler = OPES(system, variables, temperature, barrier, 500, 50,
 `getCt()` returns c(t), the constant that makes reweighting with a bias that
 still changes exact: a sample taken at time t gets weight
 exp(β[V_t(s) − c(t)]). The default estimate uses the current bias and density
-estimate. `getCt("running")` is PLUMED's `rct`, which lags behind but needs no
-density estimate.
+estimate. `getCt("running")` is PLUMED's `rct`. It lags behind the current
+bias, so treat it, as PLUMED does, as a convergence diagnostic that levels off
+once the bias converges, not as a reweighting constant.
+
+`extraBias` also works in explore mode, where it changes only the reweighted
+free energy. PLUMED offers EXTRA_BIAS for OPES_METAD only.
 
 ## OPES combined with OPES-explore
 
