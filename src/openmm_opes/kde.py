@@ -138,6 +138,40 @@ class CVSpace:
             positions = expanded
         return positions
 
+    def axisImages(self, index, value):
+        """The images of one coordinate under the reflective walls of its axis.
+
+        ``value`` itself, plus its reflections off both walls when the space is
+        bounded and the axis is not periodic. :meth:`mirrorPositions` returns
+        every combination of these per-axis images.
+        """
+        cv = self.variables[index]
+        if self.bounded and not cv.periodic:
+            return (value, 2 * cv.minValue - value, 2 * cv.maxValue - value)
+        return (value,)
+
+    def axisDisplacement(self, index, start, end):
+        """Displacement along one axis, minimum-image if that axis is periodic."""
+        disp = end - start
+        if self.variables[index].periodic:
+            length = self._lengths[index]
+            disp = disp - length * np.rint(disp / length)
+        return disp
+
+    def foldedAxis(self, index, values):
+        """Fold one axis's tripled bounded profile back onto the domain, in log space.
+
+        A kernel factorizes over the CVs, and its mirror images under the
+        reflective walls are every combination of per-axis reflections, so
+        folding each axis's one-dimensional profile before the outer product
+        gives exactly what :meth:`foldedGrid` gives on the full tripled grid,
+        at a fraction of the cost.
+        """
+        if self.bounded and not self.variables[index].periodic:
+            values, left, right = np.array_split(values, 3)
+            values = np.logaddexp(left, np.logaddexp(values, right))
+        return values
+
     def foldedGrid(self, values):
         """Fold a tripled bounded grid back onto the physical domain, in log space."""
         if self.bounded:
@@ -257,28 +291,34 @@ class Kernel:
         so this agrees with :meth:`evaluateOnGrid`. Unbounded spaces have no
         images, so this reduces to the single-term evaluation.
         """
-        images = self.cvSpace.mirrorPositions(self.position)
-        contributions = [
-            np.sum(
+        # The kernel factorizes over the axes and its images are every
+        # combination of per-axis reflections, so the sum over images is the
+        # product over axes of per-axis sums: 3d terms instead of 3^d.
+        points = np.asarray(points, dtype=float)
+        space = self.cvSpace
+        result = self.logHeight
+        for i, (center, sigma) in enumerate(
+            zip(self.position, self.bandwidth, strict=True)
+        ):
+            terms = [
                 self.shape.exponents(
-                    self._scaledDistancesFrom(image, points, self.bandwidth)
-                ),
-                axis=-1,
-            )
-            for image in images
-        ]
-        return self.logHeight + np.logaddexp.reduce(contributions, axis=0)
+                    space.axisDisplacement(i, image, points[..., i]) / sigma
+                )
+                for image in space.axisImages(i, center)
+            ]
+            result = result + np.logaddexp.reduce(terms, axis=0)
+        return result
 
     def evaluateOnGrid(self):
         """Log of the kernel on the CV-space grid, in gridShape order."""
         distances = self.cvSpace.gridDistances(self.position)
         exponents = [
-            self.shape.exponents(dist / sigma)
-            for dist, sigma in zip(distances, self.bandwidth, strict=True)
+            self.cvSpace.foldedAxis(i, self.shape.exponents(dist / sigma))
+            for i, (dist, sigma) in enumerate(
+                zip(distances, self.bandwidth, strict=True)
+            )
         ]
-        return self.cvSpace.foldedGrid(
-            self.logHeight + functools.reduce(np.add.outer, reversed(exponents))
-        )
+        return self.logHeight + functools.reduce(np.add.outer, reversed(exponents))
 
 
 class OnlineKDE:
@@ -461,12 +501,52 @@ class OnlineKDE:
 
         Reflects the point rather than each kernel, which is equivalent (see
         :meth:`CVSpace.mirrorPositions`) and lets every kernel be evaluated
-        in one call.
+        in one call. The images are summed per axis, since the kernels
+        factorize over the axes.
         """
-        images = np.stack(self._cvSpace.mirrorPositions(point))
-        disp = self._cvSpace.displacement(self._positions, images[:, np.newaxis, :])
-        exponents = np.sum(self._shape.exponents(disp / self._bandwidths), axis=-1)
-        return np.logaddexp.reduce(self._logHeights + np.logaddexp.reduce(exponents))
+        space = self._cvSpace
+        logKernels = self._logHeights
+        for i, value in enumerate(point):
+            terms = [
+                self._shape.exponents(
+                    space.axisDisplacement(i, self._positions[:, i], image)
+                    / self._bandwidths[:, i]
+                )
+                for image in space.axisImages(i, value)
+            ]
+            logKernels = logKernels + np.logaddexp.reduce(terms, axis=0)
+        return np.logaddexp.reduce(logKernels)
+
+    #: Kernels evaluated together at every center by _logDensitiesAtCenters,
+    #: which bounds its temporary arrays to this many times the kernel count.
+    CHUNK_SIZE = 256
+
+    def _logDensitiesAtCenters(self):
+        """Log of the unnormalized mixture density at every kernel center.
+
+        Vectorized over chunks of kernels and summed per axis over the mirror
+        images, as in :meth:`Kernel.evaluate`.
+        """
+        centers = self._positions
+        if len(centers) == 0:
+            return np.empty(0)
+        space = self._cvSpace
+        result = np.full(len(centers), -np.inf)
+        for start in range(0, len(centers), self.CHUNK_SIZE):
+            stop = start + self.CHUNK_SIZE
+            logKernels = self._logHeights[start:stop, np.newaxis]
+            for i in range(space.numDimensions):
+                sigma = self._bandwidths[start:stop, i, np.newaxis]
+                terms = [
+                    self._shape.exponents(
+                        space.axisDisplacement(i, image[:, np.newaxis], centers[:, i])
+                        / sigma
+                    )
+                    for image in space.axisImages(i, self._positions[start:stop, i])
+                ]
+                logKernels = logKernels + np.logaddexp.reduce(terms, axis=0)
+            result = np.logaddexp(result, np.logaddexp.reduce(logKernels, axis=0))
+        return result
 
     def _maxLogDrop(self):
         with np.errstate(invalid="ignore"):
@@ -489,13 +569,7 @@ class OnlineKDE:
             (k.evaluateOnGrid() for k in self._kernels),
             np.full(self._cvSpace.gridShape, -np.inf),
         )
-        if self._kernels:
-            self._logPK = np.logaddexp.reduce(
-                np.stack([k.evaluate(self._positions) for k in self._kernels]),
-                axis=0,
-            )
-        else:
-            self._logPK = np.empty(0)
+        self._logPK = self._logDensitiesAtCenters()
         self._peakPK = self._logPK.copy()
         self._peakPG = self._logPG.copy()
 
