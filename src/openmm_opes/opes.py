@@ -115,9 +115,8 @@ class OPES:
         an adaptive variance, the first kernel also waits this many strides,
         so that it is sized from a measured variance.
     minBandwidth: list of float, optional
-        Per-CV floor on the bandwidth of new kernels. Defaults to each
-        variable's grid spacing, below which the tabulated bias misrepresents
-        a kernel and its forces. Zero disables it.
+        Per-CV floor on the bandwidth of new kernels. By default there is
+        none, as in PLUMED, so that Silverman's rule alone sets bandwidths.
     """
 
     def __init__(
@@ -159,9 +158,7 @@ class OPES:
         self.warmupSteps = warmupSteps
         self.statsWindowSize = statsWindowSize
         if minBandwidth is None:
-            minBandwidth = [
-                (v.maxValue - v.minValue) / (v.gridWidth - 1) for v in variables
-            ]
+            minBandwidth = [0.0] * len(variables)
         self.minBandwidth = np.asarray(minBandwidth, dtype=float)
 
         d = len(variables)
@@ -290,8 +287,8 @@ class OPES:
             for v, floor in zip(self.variables, self.minBandwidth, strict=True)
         ):
             raise ValueError(
-                "biasWidth is below minBandwidth, which defaults to the grid "
-                "spacing; increase gridWidth or biasWidth, or lower minBandwidth"
+                "biasWidth is below minBandwidth; increase biasWidth or lower "
+                "minBandwidth"
             )
         if not freeGroups:
             raise RuntimeError("OPES requires a free force group, but all are in use.")
