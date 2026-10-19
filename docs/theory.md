@@ -72,6 +72,36 @@ Rather than storing a bias grid, kernels closer than `compressionThreshold` in
 Mahalanobis distance are merged, preserving total weight, mean and second
 moment. The number of compressed kernels is what makes $|\Omega_n|$ estimable.
 
+This differs on purpose from PLUMED's `OPES_METAD`, which weights the merged
+center and variance by kernel *height* $h = w/\prod_i \sigma_i$ and keeps
+$h_1 + h_2$ as the merged height. When the two kernels have different
+bandwidths, as they do once Silverman's rule has shrunk the newer one, that
+rule does not conserve probability mass. Fed the same weighted samples and
+bandwidths, both estimates compress to about as many kernels, but against the
+uncompressed estimate the mass-preserving merge is five to eight times more
+accurate (mean absolute log-density error 0.03–0.05 against 0.17–0.25), while
+the height-weighted one inflates the total mass by 17–27%. The script is
+`benchmarks/plumed/merge_accuracy.py`. Biases built from the same samples
+therefore differ slightly from PLUMED's, by about 1 kJ/mol RMS in the tests
+there.
+
+## Adaptive bandwidth
+
+With a `varianceFrequency`, $\sigma^{(0)}$ follows the CV variance measured
+on the fly with an exponentially decaying mean of window
+$\tau$ = `statsWindowSize` deposition strides (Invernizzi & Parrinello, JCTC
+2022, SI Eqs. S1–S4). The variance is that of the *sampled* distribution, so
+OPES divides it by $\gamma$ to size its reweighted kernels, while OPES-explore
+uses it as is.
+
+No kernel is deposited during the first $\tau$ strides, so those samples are
+unbiased, and their variance is $\gamma$ times narrower than a sampled one.
+When the wait ends, the squared deviations accumulated so far are multiplied
+by $\gamma$ once; later samples come from the biased run and enter unscaled.
+Without this, the first kernels would be $\sqrt{\gamma}$ times too narrow and
+the early bias spiky. The published equations omit this step, but PLUMED's
+`OPES_METAD` and `OPES_METAD_EXPLORE` apply it at their first deposition.
+
 ## Warm-up bandwidth estimation
 
 Both papers prescribe measuring $\sigma^{(0)}$ from a short unbiased run.

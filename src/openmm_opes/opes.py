@@ -521,8 +521,11 @@ class OPES:
             return
         if self._adaptiveVariance:
             self._updateSampleStats(position)
-            if self._counter < self._tau and not self._kde[self._biasKey]:
-                return
+            if not self._kde[self._biasKey]:
+                if self._counter < self._tau:
+                    return
+                if self._counter == self._tau:
+                    self._rescaleUnbiasedVariance()
         if simulation.currentStep % self.frequency == 0:
             groups = {self._force.getForceGroup()}
             energy = (
@@ -539,6 +542,22 @@ class OPES:
                 changed = self._syncWithDisk() or changed
             if changed:
                 self.updateContext(simulation.context)
+
+    def _rescaleUnbiasedVariance(self) -> None:
+        """Turn the variance measured before the first kernel into a sampled one.
+
+        The adaptive bandwidth waits ``statsWindowSize`` deposition strides
+        before the first kernel, so every sample accumulated so far is
+        unbiased. _variance holds a sampled-distribution variance by
+        convention, which is gamma times wider than the unbiased one, so the
+        accumulated squared deviations are scaled by gamma once, here. Later
+        samples come from the biased run and enter unscaled. Without this,
+        early kernels are sqrt(gamma) times too narrow. PLUMED's OPES_METAD
+        and OPES_METAD_EXPLORE apply the same correction at their first
+        deposition, although it is not in the published equations.
+        """
+        for average in self._variance.values():
+            average._total = average._total * self._biasFactor
 
     def _finishWarmup(self) -> None:
         """Freeze sigma^(0) measured from the unbiased warm-up segment.
