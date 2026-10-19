@@ -869,7 +869,7 @@ def test_a_fixed_bandwidth_below_the_minimum_is_rejected():
         makeOPES(sigma=0.05, varianceFrequency=None)
 
 
-def test_adaptive_variance_of_the_unbiased_wait_is_rescaled_once():
+def test_adaptive_variance_of_the_unbiased_wait_is_rescaled_once(monkeypatch):
     """Before the first kernel the run is unbiased, so the variance measured
     then is gamma times narrower than the sampled one _variance stands for.
     It is rescaled once, when the wait ends, as PLUMED does; the first
@@ -883,7 +883,7 @@ def test_adaptive_variance_of_the_unbiased_wait_is_rescaled_once():
         measured.append(sampler.getVariance().copy())
         original()
 
-    sampler._rescaleUnbiasedVariance = spy
+    monkeypatch.setattr(sampler, "_rescaleUnbiasedVariance", spy)
     wait = sampler._tau * sampler.varianceFrequency
     runSteps(sampler, system, wait)
     assert len(measured) == 1
@@ -900,7 +900,9 @@ def test_adaptive_variance_of_the_unbiased_wait_is_rescaled_once():
     assert len(measured) == 1
 
 
-def test_explore_kernels_start_sqrt_gamma_wider_than_the_unbiased_width():
+def test_explore_kernels_start_sqrt_gamma_wider_than_the_unbiased_width(
+    monkeypatch,
+):
     system, variable = makeHarmonicSystem()
     sampler = OPES(
         system, [variable], 300.0, 20.0, 100, 10, exploreMode=True, minBandwidth=[0.0]
@@ -912,7 +914,7 @@ def test_explore_kernels_start_sqrt_gamma_wider_than_the_unbiased_width():
         measured.append(sampler.getVariance().copy())
         original()
 
-    sampler._rescaleUnbiasedVariance = spy
+    monkeypatch.setattr(sampler, "_rescaleUnbiasedVariance", spy)
     runSteps(sampler, system, sampler._tau * sampler.varianceFrequency)
     # Explore mode: the shrink uses N = 1 + 1 uniform weights, as Neff above
     silverman = (2 * (1 + 2) / 4) ** (-1 / (1 + 4))
