@@ -867,3 +867,57 @@ def test_an_explicit_minimum_bandwidth_replaces_the_grid_spacing():
 def test_a_fixed_bandwidth_below_the_minimum_is_rejected():
     with pytest.raises(ValueError, match="minBandwidth"):
         makeOPES(sigma=0.05, varianceFrequency=None)
+
+
+def test_adaptive_variance_of_the_unbiased_wait_is_rescaled_once():
+    """Before the first kernel the run is unbiased, so the variance measured
+    then is gamma times narrower than the sampled one _variance stands for.
+    It is rescaled once, when the wait ends, as PLUMED does; the first
+    reweighted kernel then has the unbiased width, not sqrt(gamma) less."""
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 100, 10, minBandwidth=[0.0])
+    measured = []
+    original = sampler._rescaleUnbiasedVariance
+
+    def spy():
+        measured.append(sampler.getVariance().copy())
+        original()
+
+    sampler._rescaleUnbiasedVariance = spy
+    wait = sampler._tau * sampler.varianceFrequency
+    runSteps(sampler, system, wait)
+    assert len(measured) == 1
+    assert sampler.getNumKernels() == 1
+    np.testing.assert_allclose(sampler.getVariance(), sampler._biasFactor * measured[0])
+    # The first kernel's weight is exp(beta V) at the fresh bias floor -barrier,
+    # which with the prior w0 = 1 sets Neff for Silverman's shrink
+    w = np.exp(-sampler.barrier / sampler._kbt)
+    neff = (1 + w) ** 2 / (1 + w**2)
+    silverman = (neff * (1 + 2) / 4) ** (-1 / (1 + 4))
+    first = sampler._kde["total.rw"]._kernels[0]
+    assert first.bandwidth[0] == pytest.approx(np.sqrt(measured[0][0]) * silverman)
+    runSteps(sampler, system, 5 * wait)
+    assert len(measured) == 1
+
+
+def test_explore_kernels_start_sqrt_gamma_wider_than_the_unbiased_width():
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(
+        system, [variable], 300.0, 20.0, 100, 10, exploreMode=True, minBandwidth=[0.0]
+    )
+    measured = []
+    original = sampler._rescaleUnbiasedVariance
+
+    def spy():
+        measured.append(sampler.getVariance().copy())
+        original()
+
+    sampler._rescaleUnbiasedVariance = spy
+    runSteps(sampler, system, sampler._tau * sampler.varianceFrequency)
+    # Explore mode: the shrink uses N = 1 + 1 uniform weights, as Neff above
+    silverman = (2 * (1 + 2) / 4) ** (-1 / (1 + 4))
+    first = sampler._kde["total"]._kernels[0]
+    gamma = sampler._biasFactor
+    assert first.bandwidth[0] == pytest.approx(
+        np.sqrt(gamma * measured[0][0]) * silverman
+    )
