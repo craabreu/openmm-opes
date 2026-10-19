@@ -12,6 +12,7 @@ from copy import copy
 import numpy as np
 import openmm as mm
 from openmm import unit
+from scipy.special import logsumexp
 
 from .io import BiasSharer
 from .kde import CVSpace, OnlineKDE
@@ -56,6 +57,69 @@ class RunningAverage:
         """Restore from a :meth:`getState` snapshot."""
         self._num = int(state["num"])
         self._total = np.asarray(state["total"]).copy()
+
+
+def currentCt(logPDF, bias, kbt, periodic):
+    """c(t) for the current bias, from an estimate of the unbiased density.
+
+    c = -kT ln <exp(-beta V)>, averaged over the unbiased density P on the
+    grid, which equals kT ln <exp(beta V)> over the biased ensemble. On a
+    periodic grid, the last node along each axis repeats the first and is
+    left out of the sums.
+    """
+    logPDF = np.asarray(logPDF, dtype=float)
+    beta = 1 / kbt.value_in_unit(unit.kilojoules_per_mole)
+    exponent = logPDF - beta * bias.value_in_unit(unit.kilojoules_per_mole)
+    if periodic:
+        interior = (slice(None, -1),) * logPDF.ndim
+        logPDF, exponent = logPDF[interior], exponent[interior]
+    if not np.any(np.isfinite(logPDF)):
+        return float("nan") * unit.kilojoules_per_mole
+    c = -(logsumexp(exponent) - logsumexp(logPDF)) / beta
+    return c * unit.kilojoules_per_mole
+
+
+class ExtraBias:
+    """Energies of other biases acting on a simulation, for reweighting.
+
+    Each item is a force group (int), an OpenMM Force, whose group is read at
+    evaluation time, or an object with a ``getBiasEnergy(context)`` method,
+    such as another sampler. The whole energy of each group counts, so give
+    the extra biases groups of their own.
+    """
+
+    def __init__(self, items, ownGroup):
+        self._items = list(items or [])
+        self._ownGroup = ownGroup
+        for item in self._items:
+            if not (
+                isinstance(item, (int, mm.Force)) or hasattr(item, "getBiasEnergy")
+            ):
+                raise TypeError(
+                    "extraBias items must be force groups, Forces, or objects "
+                    "with a getBiasEnergy(context) method"
+                )
+
+    def __bool__(self) -> bool:
+        return bool(self._items)
+
+    def energy(self, context):
+        """The total extra bias energy in a Context."""
+        groups = set()
+        energy = 0.0 * unit.kilojoules_per_mole
+        for item in self._items:
+            if isinstance(item, int):
+                groups.add(item)
+            elif isinstance(item, mm.Force):
+                groups.add(item.getForceGroup())
+            else:
+                energy += item.getBiasEnergy(context)
+        if self._ownGroup in groups:
+            raise ValueError("extraBias includes the force group of this sampler")
+        if groups:
+            state = context.getState(getEnergy=True, groups=groups)
+            energy += state.getPotentialEnergy()
+        return energy
 
 
 def tabulatedFunction(widths, values, limits, periodic):
@@ -126,6 +190,13 @@ class OPES:
     minBandwidth: list of float, optional
         Per-CV floor on the bandwidth of new kernels. By default there is
         none, as in PLUMED, so that Silverman's rule alone sets bandwidths.
+    extraBias: list, optional
+        Other biases acting on the simulation, as PLUMED's EXTRA_BIAS: each
+        sample is weighted by exp(beta (V + V_extra)), so that the free energy
+        estimate removes them too. Items are force groups, Forces, or objects
+        with a ``getBiasEnergy(context)`` method, such as other samplers. The
+        bias itself still follows the density estimate as usual; in explore
+        mode, only the reweighted estimate changes.
     """
 
     def __init__(
@@ -148,6 +219,7 @@ class OPES:
         kernelShape: str = "gaussian",
         statsWindowSize: int = 10,
         minBandwidth=None,
+        extraBias=None,
     ):
         if not unit.is_quantity(temperature):
             temperature = temperature * unit.kelvin
@@ -237,6 +309,7 @@ class OPES:
         )
         self._force.setForceGroup(max(freeGroups))
         system.addForce(self._force)
+        self._extraBias = ExtraBias(extraBias, self._force.getForceGroup())
 
     def _validate(
         self, d, biasFactor, numPeriodics, freeGroups, userSuppliedBiasFactor
@@ -342,6 +415,35 @@ class OPES:
         never reaches the forces.
         """
         return -self._kbt * self._kde["total.rw"].getLogPDF()
+
+    def getCt(self, estimate="current"):
+        """c(t), the reweighting constant of the time-dependent bias.
+
+        Reweighting a sample taken at time t by exp(beta [V_t(s) - c(t)])
+        removes the bias even while it still changes. Two estimates are
+        available:
+
+        * ``"current"``: -kT ln <exp(-beta V_n)> over the reweighted density
+          estimate P_n, for the bias acting now. It needs a reasonable P_n
+          and is then unbiased.
+        * ``"running"``: kT ln of the mean kernel weight, sum_k w_k / n, as
+          PLUMED's ``rct`` component. It averages over past biases, so it
+          lags behind the current one, but needs no density estimate. With
+          ``extraBias``, the weights include the extra biases.
+
+        NaN before the first kernel.
+        """
+        kde = self._kde["total.rw"]
+        if estimate == "running":
+            return self._kbt * kde.getLogMeanWeight()
+        if estimate == "current":
+            return currentCt(
+                kde.getLogPDF(),
+                self.getBias(),
+                self._kbt,
+                all(v.periodic for v in self.variables),
+            )
+        raise ValueError('estimate must be "current" or "running"')
 
     def getAverageDensity(self):
         """Z_n, the mean density over the explored CV space.
@@ -556,10 +658,17 @@ class OPES:
         step = simulation.currentStep
         if not self._observe(position) or step % self.frequency != 0:
             return
-        changed = self.addKernel(position, self.getBiasEnergy(simulation.context))
+        changed = self.addKernel(position, self._weightEnergy(simulation.context))
         changed = self._share(step) or changed
         if changed:
             self.updateContext(simulation.context)
+
+    def _weightEnergy(self, context):
+        """The bias energy that weights a new kernel: V plus any extra bias."""
+        energy = self.getBiasEnergy(context)
+        if self._extraBias:
+            energy += self._extraBias.energy(context)
+        return energy
 
     def _observe(self, position) -> bool:
         """Fold a CV sample into the variance statistics.

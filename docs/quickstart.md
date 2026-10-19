@@ -83,6 +83,26 @@ deviation of the **unbiased** distribution, in both modes. OPES-explore
 kernels estimate the sampled distribution, which is $\sqrt{\gamma}$ times
 wider, so they are deposited $\sqrt{\gamma}$ times wider than `biasWidth`.
 
+## Other biases and c(t)
+
+When other biases act on the simulation, such as a restraint you want removed
+from the free energy or another sampler, pass them as `extraBias`, as with
+PLUMED's EXTRA_BIAS. Each sample is then weighted by all of them, so
+`getFreeEnergy()` removes them too. Items can be force groups, `Force` objects
+or other samplers:
+
+```python
+restraint.setForceGroup(5)  # give it a group of its own
+sampler = OPES(system, variables, temperature, barrier, 500, 50,
+               extraBias=[restraint])
+```
+
+`getCt()` returns c(t), the constant that makes reweighting with a bias that
+still changes exact: a sample taken at time t gets weight
+exp(β[V_t(s) − c(t)]). The default estimate uses the current bias and density
+estimate. `getCt("running")` is PLUMED's `rct`, which lags behind but needs no
+density estimate.
+
 ## OPES combined with OPES-explore
 
 `CombinedOPES` runs OPES and OPES-explore together on the same collective

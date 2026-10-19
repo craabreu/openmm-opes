@@ -87,6 +87,27 @@ $F_n = -\beta^{-1}\log P_n$. In standard OPES the direct and reweighted routes
 are equivalent; in explore mode they differ until convergence, and the
 reweighted one converges better.
 
+## Extra biases and c(t)
+
+With other biases $V_x$ acting on the simulation, the kernel weights become
+$w_k = e^{\beta [V_{k-1}(\mathbf{s}_k) + V_x(\mathbf{R}_k)]}$, so that $P_n$
+estimates the distribution with every bias removed. The OPES bias itself is
+built from $P_n$ as before.
+
+For a bias that changes in time, reweighting a sample taken at time $t$ by
+$e^{\beta [V_t(\mathbf{s}) - c(t)]}$ is exact, with
+
+$$c(t) = -\frac{1}{\beta}\ln \frac{\int P(\mathbf{s})\,
+e^{-\beta V_t(\mathbf{s})}\,d\mathbf{s}}{\int P(\mathbf{s})\,d\mathbf{s}}$$
+
+`getCt()` evaluates this on the grid with $P_n$ in place of $P$. It is
+unbiased once $P_n$ is, but wrong while $P_n$ still misses basins.
+`getCt("running")` is PLUMED's `rct`, $\beta^{-1}\ln(\sum_k w_k / n)$, the
+mean weight of all samples so far. It needs no density estimate but lags
+behind the current bias, since it averages over past ones. On alanine
+dipeptide, the current-bias estimate is the more accurate one after about
+2 ns.
+
 ## Kernel compression
 
 Rather than storing a bias grid, kernels closer than `compressionThreshold` in

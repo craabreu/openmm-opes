@@ -10,7 +10,7 @@ import numpy as np
 import openmm as mm
 from openmm import app, unit
 
-from .opes import OPES, tabulatedFunction
+from .opes import OPES, ExtraBias, currentCt, tabulatedFunction
 
 _COMPONENTS = ("opes", "explore")
 
@@ -71,6 +71,9 @@ class CombinedOPES:
         subdirectory.
     walkerId: int, optional
         This walker's identifier within ``biasDir``. See :class:`OPES`.
+    extraBias: list, optional
+        Other biases acting on the simulation, as in :class:`OPES`. They join
+        the weights of the OPES kernels and of the free energy estimate.
 
     The remaining parameters, ``bounded``, ``warmupSteps``,
     ``compressionThreshold``, ``useExistingBandwidths``, ``kernelShape``,
@@ -99,6 +102,7 @@ class CombinedOPES:
         kernelShape: str = "gaussian",
         statsWindowSize: int = 10,
         minBandwidth=None,
+        extraBias=None,
     ):
         if not unit.is_quantity(barrier):
             barrier = barrier * unit.kilojoules_per_mole
@@ -181,6 +185,7 @@ class CombinedOPES:
             )
         self._force.setForceGroup(max(freeGroups))
         system.addForce(self._force)
+        self._extraBias = ExtraBias(extraBias, self._force.getForceGroup())
 
     def step(self, simulation, steps) -> None:
         """Advance the simulation by a number of time steps.
@@ -197,11 +202,15 @@ class CombinedOPES:
         ready = [c._observe(position) for c in self._components.values()]
         if not all(ready) or step % self.frequency != 0:
             return
-        opesEnergy, exploreEnergy = self.getComponentBiasEnergies(simulation.context)
+        context = simulation.context
+        opesEnergy, exploreEnergy = self.getComponentBiasEnergies(context)
+        if self._extraBias:
+            opesEnergy += self._extraBias.energy(context)
         opes, explore = self._components["opes"], self._components["explore"]
-        # Eq. 11: OPES kernels are weighted by the OPES bias alone. The explore
-        # component's target estimate is unweighted; its reweighted estimate,
-        # unused by its bias, is the unbiased estimate of Eq. 14.
+        # Eq. 11: OPES kernels are weighted by the OPES bias alone (plus any
+        # extra bias). The explore component's target estimate is unweighted;
+        # its reweighted estimate, unused by its bias, is the unbiased
+        # estimate of Eq. 14.
         changed = opes.addKernel(position, opesEnergy)
         changed = explore.addKernel(position, opesEnergy + exploreEnergy) or changed
         shared = [c._share(step) for c in self._components.values()]
@@ -270,6 +279,25 @@ class CombinedOPES:
         Rizzi. The grid follows :meth:`OPES.getFreeEnergy`.
         """
         return self._components["explore"].getFreeEnergy()
+
+    def getCt(self, estimate="current"):
+        """c(t) of the total bias, V_opes + V_explore.
+
+        ``"current"`` averages exp(-beta V) over the free energy estimate of
+        :meth:`getFreeEnergy`; ``"running"`` is kT ln of the mean weight of its
+        samples. See :meth:`OPES.getCt`.
+        """
+        explore = self._components["explore"]
+        if estimate == "running":
+            return explore.getCt("running")
+        if estimate == "current":
+            return currentCt(
+                explore._kde["total.rw"].getLogPDF(),
+                self.getBias(),
+                explore._kbt,
+                all(v.periodic for v in self.variables),
+            )
+        raise ValueError('estimate must be "current" or "running"')
 
     def getNumKernels(self) -> tuple[int, int]:
         """Numbers of kernels in the OPES and OPES-explore bias estimates."""

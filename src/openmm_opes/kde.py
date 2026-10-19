@@ -647,6 +647,17 @@ class OnlineKDE:
                 - self._logSumW
             )
 
+    def getLogMeanWeight(self) -> float:
+        """Log of the mean weight per sample, ln(sum_k w_k / n).
+
+        Merging preserves both the total weight and the sample count, so this
+        is exact however the kernels were compressed. NaN with no samples.
+        """
+        numSamples = sum(kernel.numSamples for kernel in self._kernels)
+        if numSamples == 0:
+            return float("nan")
+        return float(self._logSumW - np.log(numSamples))
+
     def evaluate(self, point) -> float:
         """Log of the normalized density at a single point."""
         return self._logDensityAt(point) - self._logSumW
