@@ -138,6 +138,20 @@ class CVSpace:
             positions = expanded
         return positions
 
+    def foldedAxis(self, index, values):
+        """Fold one axis's tripled bounded profile back onto the domain, in log space.
+
+        A kernel factorizes over the CVs, and its mirror images under the
+        reflective walls are every combination of per-axis reflections, so
+        folding each axis's one-dimensional profile before the outer product
+        gives exactly what :meth:`foldedGrid` gives on the full tripled grid,
+        at a fraction of the cost.
+        """
+        if self.bounded and not self.variables[index].periodic:
+            values, left, right = np.array_split(values, 3)
+            values = np.logaddexp(left, np.logaddexp(values, right))
+        return values
+
     def foldedGrid(self, values):
         """Fold a tripled bounded grid back onto the physical domain, in log space."""
         if self.bounded:
@@ -273,12 +287,12 @@ class Kernel:
         """Log of the kernel on the CV-space grid, in gridShape order."""
         distances = self.cvSpace.gridDistances(self.position)
         exponents = [
-            self.shape.exponents(dist / sigma)
-            for dist, sigma in zip(distances, self.bandwidth, strict=True)
+            self.cvSpace.foldedAxis(i, self.shape.exponents(dist / sigma))
+            for i, (dist, sigma) in enumerate(
+                zip(distances, self.bandwidth, strict=True)
+            )
         ]
-        return self.cvSpace.foldedGrid(
-            self.logHeight + functools.reduce(np.add.outer, reversed(exponents))
-        )
+        return self.logHeight + functools.reduce(np.add.outer, reversed(exponents))
 
 
 class OnlineKDE:

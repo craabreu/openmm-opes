@@ -126,3 +126,43 @@ def test_compact_merge_preserves_the_second_moment():
     varRef = w1 * COMPACT.variance * 1.0**2 + w2 * COMPACT.variance * 0.5**2
     varRef += w1 * w2 * 2.0**2
     assert COMPACT.variance * merged.bandwidth[0] ** 2 == pytest.approx(varRef)
+
+
+@pytest.mark.parametrize(
+    "specs",
+    [
+        ((-1.0, 2.0, 31, False),),
+        ((-1.0, 2.0, 31, False), (0.0, 0.5, 21, False)),
+        ((-np.pi, np.pi, 25, True), (0.0, 0.5, 21, False)),
+        ((-1.0, 2.0, 11, False), (0.0, 0.5, 9, False), (-np.pi, np.pi, 7, True)),
+    ],
+)
+@pytest.mark.parametrize("shape", ["gaussian", "compact"])
+def test_per_axis_folding_matches_folding_the_full_tripled_grid(specs, shape):
+    """Kernels factorize over CVs and their mirror images are products of
+    per-axis reflections, so folding each axis first is exact."""
+    import functools
+
+    from openmm_opes.kde import KERNEL_SHAPES, Kernel
+
+    space = makeSpace(*specs, bounded=True)
+    rng = np.random.default_rng(3)
+    for _ in range(5):
+        position = np.array([rng.uniform(lo, hi) for lo, hi, _, _ in specs])
+        bandwidth = np.array(
+            [0.05 + 0.3 * rng.random() * (hi - lo) for lo, hi, _, _ in specs]
+        )
+        kernel = Kernel(
+            space, position, bandwidth, rng.normal(), shape=KERNEL_SHAPES[shape]
+        )
+        distances = space.gridDistances(kernel.position)
+        exponents = [
+            kernel.shape.exponents(dist / sigma)
+            for dist, sigma in zip(distances, kernel.bandwidth, strict=True)
+        ]
+        full = space.foldedGrid(
+            kernel.logHeight + functools.reduce(np.add.outer, reversed(exponents))
+        )
+        np.testing.assert_allclose(
+            kernel.evaluateOnGrid(), full, rtol=1e-12, atol=1e-12
+        )
