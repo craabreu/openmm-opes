@@ -83,13 +83,37 @@ deviation of the **unbiased** distribution, in both modes. OPES-explore
 kernels estimate the sampled distribution, which is $\sqrt{\gamma}$ times
 wider, so they are deposited $\sqrt{\gamma}$ times wider than `biasWidth`.
 
+## OPES combined with OPES-explore
+
+`CombinedOPES` runs OPES and OPES-explore together on the same collective
+variables, the combined algorithm of Ray & Rizzi, J. Chem. Theory Comput. 21,
+58 (2025), often called OPES_COM. The explore bias keeps pushing the system out
+of its minima, which helps when the CVs are suboptimal, while the OPES bias
+converges the free energy. It takes one barrier per component; the paper
+recommends an explore barrier below the OPES one.
+
+```python
+from openmm_opes import CombinedOPES
+
+sampler = CombinedOPES(system, variables, temperature, barrier=40,
+                       exploreBarrier=20, frequency=500, varianceFrequency=50)
+sampler.step(simulation, 1_000_000)
+fes = sampler.getFreeEnergy()
+```
+
+Neither component alone estimates the unbiased distribution: each one's
+samples also feel the other's bias. `getFreeEnergy()` therefore returns a
+separate estimate that reweights every sample by the total bias.
+`getComponentBiases()` and `getComponentBiasEnergies(context)` give the two
+parts separately.
+
 ## Several samplers at once
 
-Several samplers can bias the same simulation, each depositing kernels on its
-own schedule and weighting them by its own bias only, as several OPES actions
-do in a single PLUMED input. Create them all on the same `System` and advance
-the simulation with `OPES.stepTogether`. For example, OPES and OPES-explore
-combined (Ray & Rizzi, J. Chem. Theory Comput. 21, 58 (2025)):
+More generally, several samplers can bias the same simulation, each depositing
+kernels on its own schedule and weighting them by its own bias only, as several
+OPES actions do in a single PLUMED input. Create them all on the same `System`
+and advance the simulation with `OPES.stepTogether`. For example, an OPES
+sampler on two CVs alongside an OPES-explore sampler on the first one:
 
 ```python
 opes = OPES(system, [cv1, cv2], temperature, 55, 500, 50)
@@ -100,5 +124,6 @@ OPES.stepTogether(simulation, [opes, explore], 1_000_000)
 ```
 
 Each variable's force is copied into its sampler's bias force, so pass every
-sampler its own `BiasVariable` objects. To reweight, add up the biases, which
+sampler its own `BiasVariable` objects. Each sampler's `getFreeEnergy()` is
+then biased by the others. To reweight, add up the biases, which
 `getBiasEnergy(simulation.context)` returns for each sampler.

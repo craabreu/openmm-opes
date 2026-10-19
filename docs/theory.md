@@ -62,6 +62,24 @@ $p^{\text{WT}}$ is about $\sqrt{\gamma}$ times wider than $P$, explore kernels
 start at $\sqrt{\gamma}\,\sigma^{(0)}$, with a fixed `biasWidth` still read as
 the unbiased $\sigma^{(0)}$.
 
+## OPES combined with OPES-explore
+
+`CombinedOPES` follows Ray and Rizzi (J. Chem. Theory Comput. 21, 58 (2025)).
+Both components deposit a kernel at the same steps and CV values. The explore
+component builds its target estimate from the unweighted samples, which feel
+the total bias $V^o + V^e$. The OPES component weights its kernels by its own
+bias only, $w_k = e^{\beta V^o_{k-1}(\mathbf{s}_k)}$, so its estimate is the
+distribution biased by $V^e$, not the unbiased one. The unbiased estimate
+reweights every sample by the total bias,
+
+$$P_n(\mathbf{s}) = \frac{\sum_k^n w_k\, G(\mathbf{s}, \mathbf{s}_k)}{\sum_k^n w_k},
+\qquad w_k = e^{\beta [V^o_{k-1}(\mathbf{s}_k) + V^e_{k-1}(\mathbf{s}_k)]}$$
+
+which is the paper's Eq. 14 accumulated on the fly, with kernels sized as in
+the explore component's reweighted estimate. The two biases share one force,
+so the CVs are computed once per step. At each deposition, the explore term is
+switched off for one evaluation of the bias force group to read $V^o$ alone.
+
 ## Free energy
 
 `getFreeEnergy()` always uses the importance-sampling estimate,

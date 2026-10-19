@@ -2,6 +2,8 @@
 
 ::: openmm_opes.opes.OPES
 
+::: openmm_opes.combined.CombinedOPES
+
 ::: openmm_opes.kde.OnlineKDE
 
 ::: openmm_opes.kde.CVSpace

@@ -58,6 +58,15 @@ class RunningAverage:
         self._total = np.asarray(state["total"]).copy()
 
 
+def tabulatedFunction(widths, values, limits, periodic):
+    """A 1-3D OpenMM tabulated function; ``widths`` is empty in one dimension."""
+    if not widths:
+        return mm.Continuous1DFunction(values, *limits, periodic)
+    if len(widths) == 2:
+        return mm.Continuous2DFunction(*widths, values, *limits, periodic)
+    return mm.Continuous3DFunction(*widths, values, *limits, periodic)
+
+
 class OPES:
     """On-the-fly Probability Enhanced Sampling.
 
@@ -223,17 +232,9 @@ class OPES:
         self._force = mm.CustomCVForce(energyFunction)
         for i, variable in enumerate(variables):
             self._force.addCollectiveVariable(f"cv{i}", variable.force)
-        if d == 1:
-            table = mm.Continuous1DFunction(initial, *self._limits, periodic)
-        elif d == 2:
-            table = mm.Continuous2DFunction(
-                *self._widths, initial, *self._limits, periodic
-            )
-        else:
-            table = mm.Continuous3DFunction(
-                *self._widths, initial, *self._limits, periodic
-            )
-        self._force.addTabulatedFunction("table", table)
+        self._force.addTabulatedFunction(
+            "table", tabulatedFunction(self._widths, initial, self._limits, periodic)
+        )
         self._force.setForceGroup(max(freeGroups))
         system.addForce(self._force)
 
@@ -552,27 +553,39 @@ class OPES:
 
     def _onInterval(self, simulation) -> None:
         position = self.getCollectiveVariables(simulation)
+        step = simulation.currentStep
+        if not self._observe(position) or step % self.frequency != 0:
+            return
+        changed = self.addKernel(position, self.getBiasEnergy(simulation.context))
+        changed = self._share(step) or changed
+        if changed:
+            self.updateContext(simulation.context)
+
+    def _observe(self, position) -> bool:
+        """Fold a CV sample into the variance statistics.
+
+        Returns whether kernels may be deposited yet: not during warm-up, nor,
+        with an adaptive variance, before the first stats window has elapsed.
+        """
         if not self._warmupComplete:
             self._updateSampleStats(position)
             if self._counter >= self.warmupSteps // self.varianceFrequency:
                 self._finishWarmup()
-            return
+            return False
         if self._adaptiveVariance:
             self._updateSampleStats(position)
             if not self._kde[self._biasKey]:
                 if self._counter < self._tau:
-                    return
+                    return False
                 if self._counter == self._tau:
                     self._rescaleUnbiasedVariance()
-        if simulation.currentStep % self.frequency == 0:
-            changed = self.addKernel(position, self.getBiasEnergy(simulation.context))
-            if (
-                self.saveFrequency is not None
-                and simulation.currentStep % self.saveFrequency == 0
-            ):
-                changed = self._syncWithDisk() or changed
-            if changed:
-                self.updateContext(simulation.context)
+        return True
+
+    def _share(self, step) -> bool:
+        """Sync with peers if this is a save step; whether the bias changed."""
+        if self.saveFrequency is None or step % self.saveFrequency != 0:
+            return False
+        return self._syncWithDisk()
 
     def _rescaleUnbiasedVariance(self) -> None:
         """Turn the variance measured before the first kernel into a sampled one.
