@@ -499,18 +499,59 @@ class OPES:
         steps: int
             The number of time steps to integrate.
         """
-        if self._contextStale:
-            self.updateContext(simulation.context)
+        OPES.stepTogether(simulation, [self], steps)
+
+    @staticmethod
+    def stepTogether(simulation, samplers, steps) -> None:
+        """Advance a simulation biased by several OPES samplers at once.
+
+        Each sampler adds its own bias force to the same System, as several
+        OPES actions do in a single PLUMED input. Each one deposits kernels on
+        its own schedule and weights them by its own bias only. This is how,
+        for instance, OPES and OPES-explore run together in OPES_COM (Ray &
+        Rizzi, J. Chem. Theory Comput. 21, 58 (2025)).
+
+        Parameters
+        ----------
+        simulation: Simulation
+            The Simulation to advance. Its System must contain the forces of
+            all samplers.
+        samplers: sequence of OPES
+            The samplers acting on the simulation, all distinct.
+        steps: int
+            The number of time steps to integrate.
+        """
+        samplers = list(samplers)
+        if len({id(sampler) for sampler in samplers}) != len(samplers):
+            raise ValueError("The samplers must be distinct")
+        for sampler in samplers:
+            if sampler._contextStale:
+                sampler.updateContext(simulation.context)
         stepsToGo = steps
         while stepsToGo > 0:
             nextSteps = min(
                 stepsToGo,
-                self._interval - simulation.currentStep % self._interval,
+                *(
+                    sampler._interval - simulation.currentStep % sampler._interval
+                    for sampler in samplers
+                ),
             )
             simulation.step(nextSteps)
-            if simulation.currentStep % self._interval == 0:
-                self._onInterval(simulation)
+            for sampler in samplers:
+                if simulation.currentStep % sampler._interval == 0:
+                    sampler._onInterval(simulation)
             stepsToGo -= nextSteps
+
+    def getBiasEnergy(self, context):
+        """The bias energy V(s) this sampler applies in a Context.
+
+        Parameters
+        ----------
+        context: Context
+            A Context of the System this sampler biases.
+        """
+        state = context.getState(getEnergy=True, groups={self._force.getForceGroup()})
+        return state.getPotentialEnergy() - self.barrier
 
     def _onInterval(self, simulation) -> None:
         position = self.getCollectiveVariables(simulation)
@@ -527,14 +568,7 @@ class OPES:
                 if self._counter == self._tau:
                     self._rescaleUnbiasedVariance()
         if simulation.currentStep % self.frequency == 0:
-            groups = {self._force.getForceGroup()}
-            energy = (
-                simulation.context.getState(
-                    getEnergy=True, groups=groups
-                ).getPotentialEnergy()
-                - self.barrier
-            )
-            changed = self.addKernel(position, energy)
+            changed = self.addKernel(position, self.getBiasEnergy(simulation.context))
             if (
                 self.saveFrequency is not None
                 and simulation.currentStep % self.saveFrequency == 0
