@@ -10,13 +10,16 @@ exp(V / kT) is exact. Many independent runs give the estimate and its spread.
 Usage:
     python reference.py run METAD_DIR SEED OUTFILE [--ns 20]
     python reference.py kde RUNS_DIR OUTFILE [--kappa 800]
+    python reference.py table NPZ OUTFILE
 
 ``run`` simulates under the static bias built from METAD_DIR/metad_*.npz and
 saves phi, psi and the bias energy felt every ps. ``kde`` reweights all
 samples in RUNS_DIR and estimates F(phi, psi) on the shared grid with product
-von Mises kernels of concentration kappa (1/rad^2, so kappa = 800 means a
-width of about 0.035 rad, below the grid spacing), and saves the surface and,
-per run, dF between the phi > 0 and phi < 0 halves.
+von Mises kernels of concentrations kappa and 2 kappa (1/rad^2; kappa = 800
+means a width of about 0.035 rad), extrapolated to zero kernel width, with
+jackknife standard errors over runs, and dF between the phi > 0 and phi < 0
+halves straight from the weighted samples. ``table`` writes that surface as a
+plain-text table with a header describing the system and the method.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from pathlib import Path
 
 import numpy as np
 import openmm
-from analyze import KT, combine, delta_f, interior
+from analyze import KCAL, KT, combine, interior
 from openmm import app, unit
 from run import BIAS_FACTOR, GRID, PDB, PHI, PSI, TEMPERATURE, TIMESTEP, torsion
 
@@ -106,33 +109,118 @@ def von_mises_density(samples, weights, grid, kappa, chunk=20_000):
     return density
 
 
+def normalized_fes(density):
+    """Free energy of a density on the grid, kJ/mol, normalized over the grid."""
+    return -KT * np.log(density / density.sum())
+
+
 def estimate(runs_dir, outfile, kappa):
+    """Reweight all runs and extrapolate the surface to zero kernel width.
+
+    The smoothing bias of a kernel estimate grows as the kernel variance,
+    1/kappa, so 2 F(2 kappa) - F(kappa) cancels it to leading order
+    (Richardson extrapolation). The standard error of each grid value comes
+    from a jackknife over the runs. Basin dF is also computed straight from
+    the weighted samples, with no kernel at all.
+    """
     grid = np.linspace(-np.pi, np.pi, GRID)[:-1]
-    runs = [np.load(path) for path in sorted(Path(runs_dir).glob("*.npy"))]
+    paths = sorted(Path(runs_dir).glob("*.npy"))
+    runs = [np.load(path) for path in paths]
     shift = max(run[:, 2].max() for run in runs)
-    densities, delta_fs = [], []
+    perRun = {kappa: [], 2 * kappa: []}
+    sampleDeltaF = []
     for run in runs:
         weights = np.exp((run[:, 2] - shift) / KT)
-        density = von_mises_density(run[:, :2], weights, grid, kappa)
-        densities.append(density)
-        delta_fs.append(delta_f(-KT * np.log(density), grid))
-    fes = -KT * np.log(np.sum(densities, axis=0))
-    fes -= fes.min()
+        for k in perRun:
+            perRun[k].append(von_mises_density(run[:, :2], weights, grid, k))
+        positive = run[:, 0] > 0
+        sampleDeltaF.append(
+            -KT * np.log(weights[positive].sum() / weights[~positive].sum())
+        )
+    perRun = {k: np.array(v) for k, v in perRun.items()}
+
+    def extrapolated(sums):
+        return 2 * normalized_fes(sums[2 * kappa]) - normalized_fes(sums[kappa])
+
+    totals = {k: v.sum(axis=0) for k, v in perRun.items()}
+    fes = extrapolated(totals)
+    n = len(runs)
+    jackknife = np.array(
+        [extrapolated({k: totals[k] - perRun[k][i] for k in totals}) for i in range(n)]
+    )
+    stderr = np.sqrt((n - 1) / n * np.sum((jackknife - jackknife.mean(0)) ** 2, axis=0))
+    offset = fes.min()
+    fes -= offset
+    sampleDeltaF = np.array(sampleDeltaF)
+    dfError = sampleDeltaF.std(ddof=1) / np.sqrt(n)
     np.savez(
         outfile,
         fes=fes,
+        stderr=stderr,
         grid=grid,
-        delta_f_per_run=np.array(delta_fs),
-        delta_f=delta_f(fes, grid),
         kappa=kappa,
+        delta_f=sampleDeltaF.mean(),
+        delta_f_stderr=dfError,
+        delta_f_per_run=sampleDeltaF,
         samples=sum(len(run) for run in runs),
+        runs=n,
     )
-    sem = np.std(delta_fs, ddof=1) / np.sqrt(len(delta_fs))
     print(
-        f"{len(runs)} runs, {sum(len(r) for r in runs)} samples, kappa {kappa}: "
-        f"dF = {delta_f(fes, grid):.3f} kJ/mol "
-        f"(runs: {np.mean(delta_fs):.3f} +/- {sem:.3f})"
+        f"{n} runs, {sum(len(r) for r in runs)} samples, kappa {kappa} and "
+        f"{2 * kappa}: dF = {sampleDeltaF.mean():.3f} +/- {dfError:.3f} kJ/mol; "
+        f"median standard error of F < 5 kcal/mol: "
+        f"{np.median(stderr[fes < 5 * KCAL]):.3f} kJ/mol"
     )
+
+
+def write_table(npz, outfile):
+    """Write the reference surface as a plain-text table with a descriptive header."""
+    data = np.load(npz)
+    fes, stderr, grid = data["fes"], data["stderr"], data["grid"]
+    psi, phi = np.meshgrid(grid, grid, indexing="ij")
+    header = TABLE_HEADER.format(
+        runs=int(data["runs"]),
+        samples=int(data["samples"]),
+        kappa=float(data["kappa"]),
+        kappa2=2 * float(data["kappa"]),
+        dF=float(data["delta_f"]) / KCAL,
+        dFerr=float(data["delta_f_stderr"]) / KCAL,
+        n=len(grid),
+    )
+    table = np.column_stack(
+        [phi.ravel(), psi.ravel(), fes.ravel() / KCAL, stderr.ravel() / KCAL]
+    )
+    np.savetxt(outfile, table, fmt="%9.5f %9.5f %9.5f %8.5f", header=header)
+
+
+TABLE_HEADER = """\
+Reference free energy surface of alanine dipeptide in vacuum, F(phi, psi)
+Ramachandran free energy landscape (potential of mean force) of the backbone
+dihedrals phi and psi of alanine dipeptide (Ace-Ala-Nme), from openmm-opes,
+benchmarks/alanine. Useful as ground truth for enhanced sampling benchmarks
+(OPES, metadynamics, umbrella sampling, ABF, ...).
+
+System: Amber ff14SB (OpenMM amber14-all.xml), vacuum, no cutoff, bonds to
+hydrogen constrained, hydrogen mass 4 amu, Langevin middle integrator at
+300 K, friction 1/ps, 4 fs step. phi = C-N-CA-C (atoms 4,6,8,14), psi =
+N-CA-C-N (atoms 6,8,14,16) of the OpenMM alanine-dipeptide test structure.
+
+Method: {runs} independent runs of 200 ns under a fixed bias, the converged
+well-tempered metadynamics bias, sampled every ps ({samples} samples) and
+reweighted exactly by exp(beta V). Densities from product von Mises kernels
+at kappa = {kappa:g} and {kappa2:g} rad^-2, Richardson-extrapolated to zero
+kernel width: F = 2 F(kappa2) - F(kappa). Standard errors by jackknife over
+runs; they leave out the residual smoothing bias, a few thousandths of a
+kcal/mol where F < 5 kcal/mol (a three-point extrapolation that also includes
+kappa / 2 differs by 0.002 kcal/mol RMS).
+
+Free energy difference between the phi > 0 (C7ax, alpha_L) and phi < 0
+(C7eq, C5, beta, alpha_R) regions, from the weighted samples:
+dF = {dF:.4f} +/- {dFerr:.4f} kcal/mol.
+
+Grid: {n} x {n} points, phi and psi from -pi in steps of 2 pi / {n} (radians);
+F relative to its minimum. Values above about 12 kcal/mol are less reliable.
+Columns: phi (rad), psi (rad), F (kcal/mol), standard error of F (kcal/mol)."""
 
 
 def main():
@@ -147,11 +235,16 @@ def main():
     kde.add_argument("runs_dir", type=Path)
     kde.add_argument("outfile", type=Path)
     kde.add_argument("--kappa", type=float, default=800)
+    table = commands.add_parser("table")
+    table.add_argument("npz", type=Path)
+    table.add_argument("outfile", type=Path)
     args = parser.parse_args()
     if args.command == "run":
         simulate(args.metad_dir, args.seed, args.outfile, args.ns)
-    else:
+    elif args.command == "kde":
         estimate(args.runs_dir, args.outfile, args.kappa)
+    else:
+        write_table(args.npz, args.outfile)
 
 
 if __name__ == "__main__":

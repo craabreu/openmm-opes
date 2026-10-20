@@ -3,7 +3,9 @@ Convergence of the alanine dipeptide free energy surface from run.py outputs.
 
 Usage: python analyze.py RUNS_DIR [--truth TRUTH.npz]
 
-Files are named LABEL_SEED.npz, and runs sharing a LABEL form one set. Each
+Files are named LABEL_SEED.npz, and runs sharing a LABEL form one set; OPES
+files also carry smoothing-corrected surfaces, which form the set
+LABEL-corrected. Each
 set is judged against itself: its target is the surface obtained by averaging
 the probabilities of the final surfaces of the other runs in the set, so
 that no run is compared with an average that includes it. This measures how
@@ -67,11 +69,16 @@ def metric(name, fes, target, target_df, phi):
 
 
 def load(directory):
+    """Runs by set label; corrected OPES surfaces form a set of their own."""
     sets = defaultdict(list)
     for path in sorted(Path(directory).glob("*_*.npz")):
         label = path.stem.rsplit("_", 1)[0]
         data = np.load(path)
-        sets[label].append((data["times"], interior(data["fes"]), data["grid"][:-1]))
+        times, grid = data["times"], data["grid"][:-1]
+        sets[label].append((times, interior(data["fes"]), grid))
+        if "fes_corrected" in data:
+            corrected = interior(data["fes_corrected"])
+            sets[f"{label}-corrected"].append((times, corrected, grid))
     return sets
 
 

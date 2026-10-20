@@ -8,7 +8,8 @@ Usage:
 METHOD is opes (openmm-opes) or metad (openmm.app.Metadynamics). OUTFILE, an
 .npz file, gets the free energy surface estimated by the method itself every
 --every ns, in kJ/mol on the shared phi-psi grid (GRID points per axis), with
-the simulation times in ns.
+the simulation times in ns. For OPES it also gets the surface with the
+smoothing bias corrected, as fes_corrected.
 
 Settings follow the alanine dipeptide inputs of Invernizzi & Parrinello,
 J. Phys. Chem. Lett. 11, 2731 (2020), PLUMED-NEST plumID:19.068:
@@ -37,13 +38,10 @@ BIAS_FACTOR = 10.0
 PHI, PSI = (4, 6, 8, 14), (6, 8, 14, 16)
 PDB = Path(__file__).resolve().parent / "alanine-dipeptide.pdb"
 
-# The reported free energy surfaces share this grid. Its spacing, 2 pi / 100,
-# matches PLUMED's GRID_BIN=100 for metadynamics.
+# Both methods tabulate their bias on this grid, and the reported free energy
+# surfaces share it. Its spacing, 2 pi / 100, matches PLUMED's GRID_BIN=100
+# for metadynamics.
 GRID = 101
-# openmm-opes floors kernel bandwidths at its own grid spacing, so its bias
-# grid is finer than the reported one, keeping the floor (0.021 rad) well
-# below the bandwidths reached here.
-OPES_GRID = 301
 
 
 def torsion(atoms):
@@ -59,7 +57,7 @@ def variables(width, grid):
     ]
 
 
-def build_simulation(method, seed, opes_grid=OPES_GRID, min_bandwidth=None):
+def build_simulation(method, seed):
     pdb = app.PDBFile(str(PDB))
     forcefield = app.ForceField("amber14-all.xml")
     system = forcefield.createSystem(
@@ -73,13 +71,12 @@ def build_simulation(method, seed, opes_grid=OPES_GRID, min_bandwidth=None):
 
         sampler = OPES(
             system,
-            variables(0.15, opes_grid),
+            variables(0.15, GRID),
             TEMPERATURE,
             50 * unit.kilojoules_per_mole,
             PACE,
             None,  # fixed initial bandwidth, SIGMA=0.15 as in the paper
             biasFactor=BIAS_FACTOR,
-            minBandwidth=min_bandwidth,
         )
     else:
         sampler = app.Metadynamics(
@@ -106,14 +103,13 @@ def build_simulation(method, seed, opes_grid=OPES_GRID, min_bandwidth=None):
     return simulation, sampler
 
 
-def free_energy(method, sampler, opes_grid=OPES_GRID):
+def free_energy(sampler, correctSmoothing=False):
     """The method's own estimate of F(phi, psi) on the shared grid, kJ/mol."""
-    fes = sampler.getFreeEnergy().value_in_unit(unit.kilojoules_per_mole)
-    if method == "opes":
-        # Bring the finer openmm-opes grid onto the shared one; both span
-        # [-pi, pi] with the last point repeating the first.
-        stride = (opes_grid - 1) // (GRID - 1)
-        fes = fes[::stride, ::stride]
+    if correctSmoothing:
+        fes = sampler.getFreeEnergy(correctSmoothing=True)
+    else:
+        fes = sampler.getFreeEnergy()
+    fes = fes.value_in_unit(unit.kilojoules_per_mole)
     return fes - fes.min()
 
 
@@ -124,34 +120,23 @@ def main():
     parser.add_argument("outfile", type=Path)
     parser.add_argument("--ns", type=float, default=50)
     parser.add_argument("--every", type=float, default=1)
-    parser.add_argument(
-        "--opes-grid", type=int, default=OPES_GRID, help="points per axis, OPES only"
-    )
-    parser.add_argument(
-        "--no-floor",
-        action="store_true",
-        help="OPES only: no bandwidth floor (minBandwidth=0), as in PLUMED",
-    )
     args = parser.parse_args()
-    if (args.opes_grid - 1) % (GRID - 1):
-        parser.error(f"--opes-grid must be a multiple of {GRID - 1} plus one")
-    simulation, sampler = build_simulation(
-        args.method,
-        args.seed,
-        args.opes_grid,
-        [0.0, 0.0] if args.no_floor else None,
-    )
+    simulation, sampler = build_simulation(args.method, args.seed)
     chunk = round(args.every * 1000 / TIMESTEP)
-    times, surfaces = [], []
+    times, surfaces, corrected = [], [], []
     for k in range(1, round(args.ns / args.every) + 1):
         sampler.step(simulation, chunk)
         times.append(k * args.every)
-        surfaces.append(free_energy(args.method, sampler, args.opes_grid))
+        surfaces.append(free_energy(sampler))
+        if args.method == "opes":
+            corrected.append(free_energy(sampler, correctSmoothing=True))
+    extra = {"fes_corrected": np.array(corrected)} if corrected else {}
     np.savez_compressed(
         args.outfile,
         times=np.array(times),
         fes=np.array(surfaces),
         grid=np.linspace(-np.pi, np.pi, GRID),
+        **extra,
     )
 
 
