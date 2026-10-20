@@ -3,11 +3,16 @@ name: Conda
 # Builds the conda package and uploads it to the mdtools channel on
 # anaconda.org when a GitHub Release is published (prereleases are skipped).
 # A manual run with a tag rebuilds and uploads that release; a manual run
-# without one builds the current branch as a dry run, with no upload.
+# without one builds the current branch as a dry run, with no upload. Pull
+# requests that change the recipe or this workflow also get a dry run.
 
 on:
   release:
     types: [published]
+  pull_request:
+    paths:
+      - "devtools/conda-recipe/**"
+      - ".github/workflows/conda.yml"
   workflow_dispatch:
     inputs:
       tag:
