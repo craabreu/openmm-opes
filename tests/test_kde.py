@@ -235,7 +235,7 @@ def test_iadd_combines_the_weight_moments_rather_than_re_accumulating():
 
 
 def reflectedDensity(kde, point):
-    """Normalized mixture density at ``point``, summing every mirror image.
+    """Normalized mixture density at `point`, summing every mirror image.
 
     Reflecting the evaluation point across each wall is equivalent to
     reflecting the kernel, and a diagonal kernel factorizes per dimension, so

@@ -4,8 +4,8 @@ Pure NumPy. This module must not import openmm, and deliberately knows
 nothing about kernels: it moves flat dicts of arrays so it stays testable
 without a simulation.
 
-The format is ``np.savez``, not pickle. A walker reads files written by other
-processes out of a shared directory, and ``pickle.load`` on data from another
+The format is `np.savez`, not pickle. A walker reads files written by other
+processes out of a shared directory, and `pickle.load` on data from another
 process would be a remote-code-execution primitive. OpenMM's own Metadynamics
 writes .npy for the same reason.
 """
@@ -88,7 +88,7 @@ class BiasSharer:
     def load(self, validate=None) -> dict[int, dict]:
         """Return peer states that are new or have advanced since the last call.
 
-        ``validate``, when given, is called with each newly read peer's id and
+        `validate`, when given, is called with each newly read peer's id and
         state, and returns why the state is unusable, or None. An unusable
         state is skipped like an unreadable file. Exceptions it raises
         propagate.

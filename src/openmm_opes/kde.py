@@ -20,12 +20,12 @@ class CVSpace:
     ----------
     variables
         Sequence of collective variable descriptions. Each must expose
-        ``minValue``, ``maxValue``, ``gridWidth`` and ``periodic``; an
-        ``openmm.app.BiasVariable`` qualifies.
+        `minValue`, `maxValue`, `gridWidth` and `periodic`; an
+        `openmm.app.BiasVariable` qualifies.
     bounded
         Whether non-periodic variables have reflective boundaries. When true the
         internal grid is tripled with mirrored copies on each side, and
-        :meth:`foldedGrid` folds them back.
+        [`foldedGrid`][openmm_opes.kde.CVSpace.foldedGrid] folds them back.
     """
 
     CV = namedtuple("CV", ["minValue", "maxValue", "gridWidth", "periodic"])
@@ -65,7 +65,7 @@ class CVSpace:
         return len(self.variables)
 
     def displacement(self, position, endpoint):
-        """Displacement from ``position`` to ``endpoint``, minimum-image if periodic."""
+        """Displacement from `position` to `endpoint`, minimum-image if periodic."""
         disp = endpoint - position
         if self._periodic:
             disp[..., self._pdims] -= self._plengths * np.rint(
@@ -74,7 +74,7 @@ class CVSpace:
         return disp
 
     def endpoint(self, position, displacement):
-        """Endpoint reached from ``position``, wrapped into the periodic domain."""
+        """Endpoint reached from `position`, wrapped into the periodic domain."""
         end = position + displacement
         if self._periodic:
             end[..., self._pdims] = (
@@ -84,7 +84,7 @@ class CVSpace:
         return end
 
     def gridDistances(self, position):
-        """Per-axis distances from ``position`` to every grid node."""
+        """Per-axis distances from `position` to every grid node."""
         distances = [
             centers - x for centers, x in zip(self._grid, position, strict=True)
         ]
@@ -95,11 +95,12 @@ class CVSpace:
         return distances
 
     def axisGridDistances(self, index, centers):
-        """Distances from each of ``centers`` to every node of one axis.
+        """Distances from each of `centers` to every node of one axis.
 
-        A 2-D array, one row per center, matching :meth:`gridDistances` for a
-        single center: minimum-image on a periodic axis, whose last node
-        repeats the first, and over the tripled grid on a reflective axis.
+        A 2-D array, one row per center, matching
+        [`gridDistances`][openmm_opes.kde.CVSpace.gridDistances] for a single center:
+        minimum-image on a periodic axis, whose last node repeats the first, and over
+        the tripled grid on a reflective axis.
         """
         distances = (
             self._grid[index][np.newaxis, :] - np.asarray(centers)[:, np.newaxis]
@@ -129,14 +130,17 @@ class CVSpace:
         return values
 
     def foldedAxisRows(self, index, values):
-        """:meth:`foldedAxis` applied to every row of a 2-D array of log profiles."""
+        """Fold every row of a 2-D array of log profiles.
+
+        Applies [`foldedAxis`][openmm_opes.kde.CVSpace.foldedAxis] row by row.
+        """
         if self.bounded and not self.variables[index].periodic:
             values, left, right = np.array_split(values, 3, axis=1)
             values = np.logaddexp(left, np.logaddexp(values, right))
         return values
 
     def closestNode(self, position) -> tuple[int, ...]:
-        """Index of the grid node nearest to ``position``, in gridShape order."""
+        """Index of the grid node nearest to `position`, in gridShape order."""
         indices = np.rint(
             (self._widths - 1) * (position - self._lbounds) / self._lengths
         ).astype(int)
@@ -146,21 +150,22 @@ class CVSpace:
         return tuple(reversed(indices))
 
     def mirrorPositions(self, position):
-        """Every image of ``position`` under the reflective boundaries.
+        """Every image of `position` under the reflective boundaries.
 
         For each non-periodic dimension, reflecting a point off both walls
         gives two images in addition to the point itself; the images across
         every dimension combine multiplicatively (a corner sees images of
         images). Unbounded spaces, or spaces with only periodic CVs, have no
-        images: ``[position]`` is returned unchanged.
+        images: `[position]` is returned unchanged.
 
-        A kernel centered at any one of these images is, by the symmetry of
-        reflection, exactly as far from a given query point as the original
-        kernel is from that point's own mirror image -- so summing a
-        kernel's density over these images is equivalent to summing the
-        query point's images against the one true kernel, which is what the
-        tripled evaluation grid does. Used to keep :meth:`Kernel.evaluate`
-        (arbitrary points) consistent with :meth:`Kernel.evaluateOnGrid`.
+        A kernel centered at any one of these images is, by the symmetry of reflection,
+        exactly as far from a given query point as the original kernel is from that
+        point's own mirror image -- so summing a kernel's density over these images is
+        equivalent to summing the query point's images against the one true kernel,
+        which is what the tripled evaluation grid does. Used to keep
+        [`Kernel.evaluate`][openmm_opes.kde.Kernel.evaluate] (arbitrary points)
+        consistent with
+        [`Kernel.evaluateOnGrid`][openmm_opes.kde.Kernel.evaluateOnGrid].
         """
         positions = [np.array(position, dtype=float)]
         if not self.bounded:
@@ -183,9 +188,10 @@ class CVSpace:
     def axisImages(self, index, value):
         """The images of one coordinate under the reflective walls of its axis.
 
-        ``value`` itself, plus its reflections off both walls when the space is
-        bounded and the axis is not periodic. :meth:`mirrorPositions` returns
-        every combination of these per-axis images.
+        `value` itself, plus its reflections off both walls when the space is bounded
+        and the axis is not periodic.
+        [`mirrorPositions`][openmm_opes.kde.CVSpace.mirrorPositions] returns every
+        combination of these per-axis images.
         """
         cv = self.variables[index]
         if self.bounded and not cv.periodic:
@@ -203,11 +209,11 @@ class CVSpace:
     def foldedAxis(self, index, values):
         """Fold one axis's tripled bounded profile back onto the domain, in log space.
 
-        A kernel factorizes over the CVs, and its mirror images under the
-        reflective walls are every combination of per-axis reflections, so
-        folding each axis's one-dimensional profile before the outer product
-        gives exactly what :meth:`foldedGrid` gives on the full tripled grid,
-        at a fraction of the cost.
+        A kernel factorizes over the CVs, and its mirror images under the reflective
+        walls are every combination of per-axis reflections, so folding each axis's
+        one-dimensional profile before the outer product gives exactly what
+        [`foldedGrid`][openmm_opes.kde.CVSpace.foldedGrid] gives on the full tripled
+        grid, at a fraction of the cost.
         """
         if self.bounded and not self.variables[index].periodic:
             values, left, right = np.array_split(values, 3)
@@ -235,7 +241,7 @@ class KernelShape:
         self._exponents = exponents
 
     def exponents(self, x):
-        """Log of the kernel profile at scaled distances ``x``."""
+        """Log of the kernel profile at scaled distances `x`."""
         return self._exponents(x)
 
 
@@ -310,7 +316,7 @@ class Kernel:
         return index, sqDistances[index]
 
     def merge(self, other) -> None:
-        """Absorb ``other``, preserving total weight, mean and second moment."""
+        """Absorb `other`, preserving total weight, mean and second moment."""
         logSumWeights = np.logaddexp(self.logWeight, other.logWeight)
         w1 = np.exp(self.logWeight - logSumWeights)
         w2 = np.exp(other.logWeight - logSumWeights)
@@ -328,10 +334,11 @@ class Kernel:
     def evaluate(self, points):
         """Log of the kernel at the given point or points.
 
-        Reflected at the domain walls when the space is bounded, by summing
-        over the kernel's mirror images (see :meth:`CVSpace.mirrorPositions`)
-        so this agrees with :meth:`evaluateOnGrid`. Unbounded spaces have no
-        images, so this reduces to the single-term evaluation.
+        Reflected at the domain walls when the space is bounded, by summing over the
+        kernel's mirror images (see
+        [`CVSpace.mirrorPositions`][openmm_opes.kde.CVSpace.mirrorPositions]) so this
+        agrees with [`evaluateOnGrid`][openmm_opes.kde.Kernel.evaluateOnGrid]. Unbounded
+        spaces have no images, so this reduces to the single-term evaluation.
         """
         # The kernel factorizes over the axes and its images are every
         # combination of per-axis reflections, so the sum over images is the
@@ -369,7 +376,7 @@ class OnlineKDE:
     Parameters
     ----------
     cvSpace
-        The :class:`CVSpace` the estimate lives on.
+        The [`CVSpace`][openmm_opes.kde.CVSpace] the estimate lives on.
     compressionThreshold
         Merge a new kernel into any existing kernel closer than this, measured
         as a Mahalanobis distance. Zero disables merging.
@@ -377,7 +384,7 @@ class OnlineKDE:
         Whether the nearest-neighbour search scales distances by the existing
         kernels' bandwidths rather than the incoming kernel's.
     kernelShape
-        Either ``"gaussian"`` or ``"compact"``.
+        Either `"gaussian"` or `"compact"`.
     minBandwidth
         Per-CV floor on the bandwidth of new kernels, applied after the
         Silverman shrink. Zero disables it.
@@ -437,7 +444,7 @@ class OnlineKDE:
         return new
 
     def __iadd__(self, other):
-        """Absorb every kernel of ``other``.
+        """Absorb every kernel of `other`.
 
         The weight moments are combined directly rather than re-accumulated
         from the absorbed kernels: a compressed kernel carries the combined
@@ -542,9 +549,9 @@ class OnlineKDE:
         """Log of the unnormalized mixture density at a single point.
 
         Reflects the point rather than each kernel, which is equivalent (see
-        :meth:`CVSpace.mirrorPositions`) and lets every kernel be evaluated
-        in one call. The images are summed per axis, since the kernels
-        factorize over the axes.
+        [`CVSpace.mirrorPositions`][openmm_opes.kde.CVSpace.mirrorPositions]) and lets
+        every kernel be evaluated in one call. The images are summed per axis, since the
+        kernels factorize over the axes.
         """
         space = self._cvSpace
         logKernels = self._logHeights
@@ -630,10 +637,10 @@ class OnlineKDE:
         return values
 
     def _logMixtureAtPoints(self, points, positions, bandwidths, logHeights):
-        """Log of sum_k exp(logHeights[k]) G_k at each of ``points``.
+        """Log of sum_k exp(logHeights[k]) G_k at each of `points`.
 
         Vectorized over chunks of kernels and summed per axis over the mirror
-        images, as in :meth:`Kernel.evaluate`.
+        images, as in [`Kernel.evaluate`][openmm_opes.kde.Kernel.evaluate].
         """
         space = self._cvSpace
         result = np.full(len(points), -np.inf)
@@ -711,9 +718,9 @@ class OnlineKDE:
     def bandwidthFactor(self, logWeight) -> float:
         """Silverman shrink factor for a new kernel of the given log weight.
 
-        Computed from this estimate's effective sample size with the new
-        kernel's weight already counted, which is what :meth:`update` applies.
-        The sample size also counts a prior weight w0 = 1, so kernels whose
+        Computed from this estimate's effective sample size with the new kernel's weight
+        already counted, which is what [`update`][openmm_opes.kde.OnlineKDE.update]
+        applies. The sample size also counts a prior weight w0 = 1, so kernels whose
         weights are small next to it barely shrink the bandwidth.
         """
         logSumW = np.logaddexp(0.0, np.logaddexp(self._logSumW, logWeight))
@@ -724,10 +731,10 @@ class OnlineKDE:
     def update(self, position, logWeight, variance, factor=None) -> None:
         """Deposit a kernel of the given log weight and per-CV variance.
 
-        The bandwidth is shrunk by ``factor`` when given, and otherwise by
-        this estimate's own :meth:`bandwidthFactor`. Passing one lets an
-        estimate that is part of a larger one size kernels by the larger
-        one's sample size.
+        The bandwidth is shrunk by `factor` when given, and otherwise by this estimate's
+        own [`bandwidthFactor`][openmm_opes.kde.OnlineKDE.bandwidthFactor]. Passing one
+        lets an estimate that is part of a larger one size kernels by the larger one's
+        sample size.
         """
         if factor is None:
             self._addKernel(position, np.sqrt(variance), logWeight)
@@ -743,10 +750,10 @@ class OnlineKDE:
     def getLogPDF(self):
         """Log of the normalized probability density on the grid.
 
-        With no kernels deposited yet, both operands are -inf and the
-        result is the documented NaN (see :meth:`getState`'s empty-KDE
-        note) rather than an error; the subtraction is expected to be
-        undefined here, not a sign that something went wrong.
+        With no kernels deposited yet, both operands are -inf and the result is the
+        documented NaN (see [`getState`][openmm_opes.kde.OnlineKDE.getState]'s empty-KDE
+        note) rather than an error; the subtraction is expected to be undefined here,
+        not a sign that something went wrong.
         """
         with np.errstate(invalid="ignore"):
             return self._logPG - self._logSumW
@@ -763,16 +770,16 @@ class OnlineKDE:
         while keeping the estimate positive:
 
         1. A pilot estimate P~ uses the same kernels, broadened by
-           ``pilotFactor``, which keeps its noise low.
+           `pilotFactor`, which keeps its noise low.
         2. Each kernel's weight is divided by P~ at its center, so the
            reweighted samples follow P / P~, which is nearly flat.
         3. Smoothing that ratio with the broad kernels costs little bias, and
            P~ times the smoothed ratio estimates P.
 
-        ``iterations`` repeats steps 2 and 3 with the result as the pilot.
+        `iterations` repeats steps 2 and 3 with the result as the pilot.
         The product does not conserve probability locally, which would shift
         free energy differences between basins. So the result is finally
-        rescaled to carry, at the length scale of ``matchingScale`` pilot
+        rescaled to carry, at the length scale of `matchingScale` pilot
         bandwidths, the same probability as the uncorrected estimate, which
         conserves it kernel by kernel.
 
@@ -782,8 +789,9 @@ class OnlineKDE:
         than good.
 
         Only the reported density changes; the bias built from
-        :meth:`getLogPDF` does not. Costs a few evaluations of the broadened
-        kernels on the grid and at the kernel centers. NaN with no kernels.
+        [`getLogPDF`][openmm_opes.kde.OnlineKDE.getLogPDF] does not. Costs a few
+        evaluations of the broadened kernels on the grid and at the kernel centers. NaN
+        with no kernels.
         """
         standard = self.getLogPDF()
         if not self._kernels:
@@ -852,8 +860,9 @@ class OnlineKDE:
         """Log of Z_n, the mean density over the compressed kernel centers.
 
         NaN with no kernels deposited yet, for the same reason as
-        :meth:`getLogPDF`: the mean over an empty set is undefined, so the
-        log(0) and inf - inf along the way are expected, not warned about.
+        [`getLogPDF`][openmm_opes.kde.OnlineKDE.getLogPDF]: the mean over an empty set
+        is undefined, so the log(0) and inf - inf along the way are expected, not warned
+        about.
         """
         with np.errstate(divide="ignore", invalid="ignore"):
             return (
@@ -890,7 +899,10 @@ class OnlineKDE:
         }
 
     def setState(self, state) -> None:
-        """Restore from a :meth:`getState` snapshot, discarding current contents."""
+        """Restore from a snapshot, discarding current contents.
+
+        The snapshot comes from [`getState`][openmm_opes.kde.OnlineKDE.getState].
+        """
         self._setKernels(
             [
                 Kernel(

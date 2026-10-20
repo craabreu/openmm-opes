@@ -2,8 +2,8 @@
 Deposition parity between openmm-opes and PLUMED's OPES, without dynamics.
 
 Both implementations receive the same CV time series. PLUMED reads it with
-READ in ``plumed driver --noatoms``. openmm-opes gets it through
-:class:`TrajectoryReplay`, a stand-in for an OpenMM Simulation whose ``step``
+READ in `plumed driver --noatoms`. openmm-opes gets it through
+`TrajectoryReplay`, a stand-in for an OpenMM Simulation whose `step`
 moves a dummy particle, whose x (and y) coordinate is the CV, to the next
 sample. Since OPES depositions depend only on the visited CV values and on the
 bias itself, any difference in the resulting bias comes from the algorithms,
@@ -45,10 +45,10 @@ from openmm_opes import OPES, CombinedOPES
 class Case:
     """One comparison: dimensionality, OPES variant and sampler settings.
 
-    ``bandwidth`` fixes the initial kernel bandwidth in both codes; when None,
-    both estimate it adaptively. With an ``exploreBarrier``, OPES and
+    `bandwidth` fixes the initial kernel bandwidth in both codes; when None,
+    both estimate it adaptively. With an `exploreBarrier`, OPES and
     OPES-explore act together (OPES_COM): two actions in PLUMED and a
-    CombinedOPES in openmm-opes, and ``explore`` is ignored.
+    CombinedOPES in openmm-opes, and `explore` is ignored.
     """
 
     dims: int
@@ -192,8 +192,8 @@ def plumed_bias(plumed, workdir: Path, case: Case, traj, grid):
 class TrajectoryReplay:
     """A stand-in for an OpenMM Simulation that replays a CV trajectory.
 
-    It has the ``context``, ``currentStep`` and ``step`` that
-    :meth:`OPES.stepTogether` uses. Each step moves the dummy particle to the
+    It has the `context`, `currentStep` and `step` that
+    `OPES.stepTogether` uses. Each step moves the dummy particle to the
     next sample and records the bias felt there, before any deposition at that
     step, which is the order in which PLUMED's driver reports the bias.
     """
