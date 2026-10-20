@@ -1,0 +1,70 @@
+name: Conda
+
+# Builds the conda package and uploads it to the mdtools channel on
+# anaconda.org when a GitHub Release is published (prereleases are skipped).
+# A manual run with a tag rebuilds and uploads that release; a manual run
+# without one builds the current branch as a dry run, with no upload. Pull
+# requests that change the recipe or this workflow also get a dry run.
+
+on:
+  release:
+    types: [published]
+  pull_request:
+    paths:
+      - "devtools/conda-recipe/**"
+      - ".github/workflows/conda.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and upload, such as v0.2.0; leave empty for a dry run"
+        required: false
+
+jobs:
+  conda:
+    if: github.event_name != 'release' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # -e so that a failed build or upload fails the job
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: build
+          create-args: >-
+            python=3.11
+            conda-build
+            anaconda-client
+          condarc: |
+            channels:
+              - conda-forge
+
+      - name: Check the version
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ -n "$TAG" ] && [ "$version" != "${TAG#v}" ]; then
+            echo "pyproject.toml version ($version) does not match release tag ($TAG)"
+            exit 1
+          fi
+          echo "OPES_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          mkdir -p "$RUNNER_TEMP/conda-bld"
+          conda build devtools/conda-recipe -c conda-forge --output-folder "$RUNNER_TEMP/conda-bld"
+          package=$(find "$RUNNER_TEMP/conda-bld" \( -name '*.conda' -o -name '*.tar.bz2' \) | head -1)
+          test -n "$package" || { echo "No conda package was built"; exit 1; }
+          echo "PACKAGE=$package" >> "$GITHUB_ENV"
+
+      - name: Upload to mdtools
+        if: github.event_name == 'release' || inputs.tag != ''
+        env:
+          ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_TOKEN }}
+        run: anaconda upload --user mdtools --label main --force "$PACKAGE"
