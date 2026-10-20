@@ -6,8 +6,11 @@ Usage: python surfaces.py RUNS_DIR TRUTH.npz SEED OUTFILE
 Draws, for one seed at the end of its run, the OPES surface before and after
 the smoothing correction and the metadynamics surface (top row), and their
 differences from the reference surface (bottom row). Differences are shown
-where the reference is below 8 kcal/mol, after removing the mean offset where
-it is below 5 kcal/mol. OUTFILE gets .png and .svg versions.
+where the reference is below 11 kcal/mol, which includes the transition
+region between the basins, after removing the mean offset where it is below
+5 kcal/mol. The color scale stops at 0.4 kcal/mol; larger differences, which
+uncorrected OPES reaches near the transition region, are clipped. OUTFILE
+gets .png and .svg versions.
 """
 
 import argparse
@@ -28,7 +31,7 @@ FILES = {
     "opes-corrected": ("opes", "fes_corrected"),
     "metad": ("metad", "fes"),
 }
-SHOWN = 8.0 * KCAL
+SHOWN = 11.0 * KCAL
 
 
 def closed(values):
@@ -94,7 +97,7 @@ def main():
             phi,
             phi,
             truth / KCAL,
-            levels=np.arange(1, 9),
+            levels=np.arange(1, 12),
             colors="k",
             linewidths=0.3,
         )
