@@ -788,13 +788,14 @@ PLUMED's <code>OPES_METAD</code> and <code>OPES_METAD_EXPLORE</code>.</p>
 <li><strong>Checkpoints</strong> through <code>getState</code> and <code>setState</code>.</li>
 </ul>
 <h2 id="installation">Installation</h2>
+<p>With conda, from the <a href="https://anaconda.org/mdtools">mdtools</a> channel, with
+OpenMM and the other dependencies from conda-forge:</p>
+<div class="highlight"><pre><span></span><code>conda<span class="w"> </span>install<span class="w"> </span>-c<span class="w"> </span>conda-forge<span class="w"> </span>-c<span class="w"> </span>mdtools<span class="w"> </span>openmm-opes
+</code></pre></div>
+<p>Or with pip:</p>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>openmm-opes
 </code></pre></div>
-<p>It needs Python 3.11 or later and OpenMM 8.1 or later. OpenMM can also come
-from conda-forge:</p>
-<div class="highlight"><pre><span></span><code>conda<span class="w"> </span>install<span class="w"> </span>-c<span class="w"> </span>conda-forge<span class="w"> </span>openmm
-pip<span class="w"> </span>install<span class="w"> </span>openmm-opes
-</code></pre></div>
+<p>It needs Python 3.11 or later and OpenMM 8.1 or later.</p>
 <h2 id="at-a-glance">At a glance</h2>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">openmm</span><span class="w"> </span><span class="kn">import</span> <span class="n">unit</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">openmm_opes</span><span class="w"> </span><span class="kn">import</span> <span class="n">OPES</span>
