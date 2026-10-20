@@ -196,7 +196,7 @@ Runs use OpenMM's Reference platform, one process per seed, so they
 parallelize trivially. A 50 ns run took about 8.5 minutes with OPES, including
 the corrected surface every nanosecond, and about 6 minutes with
 metadynamics. The 48 runs of 200 ns behind the reference surface are the
-expensive part. The results above come from openmm-opes at 35be0b0.
+expensive part. The results above come from openmm-opes 0.2.0.
 
 ## Files
 

@@ -1,6 +1,6 @@
 """OpenMM implementation of On-the-fly Probability Enhanced Sampling (OPES)."""
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 __all__ = ["OPES", "CombinedOPES", "__version__"]
 
