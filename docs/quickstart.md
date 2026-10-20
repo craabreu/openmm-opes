@@ -143,6 +143,25 @@ fes = sampler.getFreeEnergy(correctSmoothing=True)
 It also lowers the noise of a single run, but it needs kernels narrow compared
 with the basins, so use it on well-converged runs. See the theory page.
 
+## Multiple walkers
+
+Several simulations can share one bias. Give each its own sampler with the
+same settings, point them all at the same directory, and give each a stable
+walker id:
+
+```python
+sampler = OPES(system, variables, temperature, barrier, 500, 50,
+               saveFrequency=5000, biasDir="walkers", walkerId=rank)
+```
+
+Every `saveFrequency` steps, which must be a multiple of the deposition
+`frequency`, each walker writes its own kernels to the directory and folds in
+everyone else's. The walkers can run as separate processes or on separate
+machines that share a file system. A stable `walkerId` lets a restarted
+walker take back its own file, instead of leaving the old one behind as a
+phantom extra walker. `CombinedOPES` takes the same options and keeps each
+component's files in its own subdirectory.
+
 ## Several samplers at once
 
 More generally, several samplers can bias the same simulation, each depositing

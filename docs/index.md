@@ -1,13 +1,29 @@
 # openmm-opes
 
-An [OpenMM](https://openmm.org) implementation of **On-the-fly Probability
-Enhanced Sampling** (OPES) and its exploratory variant, OPES-explore.
+On-the-fly Probability Enhanced Sampling (OPES) for [OpenMM](https://openmm.org).
 
-OPES builds a bias potential from an on-the-fly estimate of the probability
-distribution along a set of collective variables, rather than accumulating
-repulsive hills the way metadynamics does. It needs only three parameters:
-the deposition pace, the initial kernel bandwidth, and the approximate height
-of the barrier to overcome.
+OPES is an enhanced sampling method that builds its bias from an on-the-fly
+estimate of the probability distribution along a few collective variables,
+instead of accumulating repulsive hills as metadynamics does. The bias soon
+becomes nearly static, so free energies converge quickly and reweighting is
+simple, and it needs only an expected barrier height, a deposition stride and
+a kernel bandwidth. openmm-opes implements it as a plain Python package on
+top of OpenMM, in the spirit of `openmm.app.Metadynamics`, validated against
+PLUMED's `OPES_METAD` and `OPES_METAD_EXPLORE`.
+
+## Features
+
+- **OPES and OPES-explore,** with fixed, adaptive or warm-up bandwidths and
+  on-the-fly kernel compression.
+- **OPES and OPES-explore combined** (OPES_COM), as a single `CombinedOPES`
+  sampler.
+- **Multiple walkers** sharing one bias through a directory.
+- **Several samplers on one simulation,** with extra biases folded into the
+  reweighting.
+- **Reweighting tools:** the time-dependent constant c(t), and PLUMED's `rct`.
+- **Smoothing-corrected free energy surfaces.**
+- **Periodic, unbounded or reflective collective variables,** one to three of
+  them, with checkpoints through `getState` and `setState`.
 
 ## Installation
 
@@ -15,42 +31,56 @@ of the barrier to overcome.
 pip install openmm-opes
 ```
 
-OpenMM itself is also distributed through conda-forge, if you prefer conda
-environments:
+It needs Python 3.11 or later and OpenMM 8.1 or later. OpenMM can also come
+from conda-forge:
 
 ```bash
-mamba install -c conda-forge openmm
+conda install -c conda-forge openmm
 pip install openmm-opes
 ```
 
 ## At a glance
 
 ```python
-from openmm import app
+from openmm import unit
 from openmm_opes import OPES
 
 sampler = OPES(
-    system, [phi, psi], 300 * unit.kelvin, 40 * unit.kilojoules_per_mole,
-    frequency=500, varianceFrequency=50,
+    system,
+    [phi, psi],  # openmm.app.BiasVariable objects
+    temperature=300 * unit.kelvin,
+    barrier=40 * unit.kilojoules_per_mole,
+    frequency=500,
+    varianceFrequency=50,
 )
 sampler.step(simulation, 1_000_000)
-fes = sampler.getFreeEnergy()
+fes = sampler.getFreeEnergy(correctSmoothing=True)
 ```
 
-See the [quickstart](quickstart.md) for a complete runnable example, and the
-[theory](theory.md) page for how the code maps onto the published equations.
+The [quickstart](quickstart.md) has a complete runnable example and the main
+options. The [theory](theory.md) page shows how the code maps onto the
+published equations and where it departs from them. The
+[benchmarks](https://github.com/craabreu/openmm-opes/tree/main/benchmarks)
+compare openmm-opes with PLUMED's OPES and with OpenMM's metadynamics, against
+a reference surface for alanine dipeptide.
 
 ## Origin
 
 This library packages and hardens the prototype implementation developed in
 [craabreu/opes-simulations](https://github.com/craabreu/opes-simulations),
-porting its `OPES`/`OnlineKDE` classes into a tested, documented package.
+porting its `OPES` and `OnlineKDE` classes into a tested, documented package.
 
 ## References
 
-1. Invernizzi & Parrinello, *Rethinking Metadynamics: From Bias Potentials to
-   Probability Distributions*, J. Phys. Chem. Lett. 2020.
-   [doi:10.1021/acs.jpclett.0c00497](https://doi.org/10.1021/acs.jpclett.0c00497)
-2. Invernizzi & Parrinello, *Exploration vs Convergence Speed in Adaptive-Bias
-   Enhanced Sampling*, J. Chem. Theory Comput. 2022.
+1. M. Invernizzi and M. Parrinello, *Rethinking Metadynamics: From Bias
+   Potentials to Probability Distributions*, J. Phys. Chem. Lett. 11, 2731
+   (2020). [doi:10.1021/acs.jpclett.0c00497](https://doi.org/10.1021/acs.jpclett.0c00497)
+2. M. Invernizzi and M. Parrinello, *Exploration vs Convergence Speed in
+   Adaptive-Bias Enhanced Sampling*, J. Chem. Theory Comput. 18, 3988 (2022).
    [doi:10.1021/acs.jctc.2c00152](https://doi.org/10.1021/acs.jctc.2c00152)
+3. D. Ray and V. Rizzi, *Enhanced Sampling with Suboptimal Collective
+   Variables: Reconciling Accuracy and Convergence Speed*, J. Chem. Theory
+   Comput. 21, 58 (2025).
+   [doi:10.1021/acs.jctc.4c01231](https://doi.org/10.1021/acs.jctc.4c01231)
+4. M. C. Jones, O. Linton and J. P. Nielsen, *A Simple Bias Reduction Method
+   for Density Estimation*, Biometrika 82, 327 (1995).
