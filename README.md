@@ -26,7 +26,10 @@ Full documentation: <https://craabreu.github.io/openmm-opes>
 
 ## Benchmarks
 
-![OPES and metadynamics on alanine dipeptide](benchmarks/alanine/figures/convergence.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="benchmarks/alanine/figures/convergence-dark.png">
+  <img alt="OPES and metadynamics on alanine dipeptide" src="benchmarks/alanine/figures/convergence.png">
+</picture>
 
 On alanine dipeptide in vacuum, OPES converges the free energy difference
 between basins several times faster than OpenMM's well-tempered metadynamics,

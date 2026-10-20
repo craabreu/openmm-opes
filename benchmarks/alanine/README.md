@@ -183,6 +183,7 @@ python reference.py plot reference.npz figures/reference
 # Analysis and figures
 python analyze.py runs --truth reference.npz
 python figure.py runs reference.npz figures/convergence
+python figure.py runs reference.npz figures/convergence-dark --dark
 python deltaf.py runs reference.npz 1 figures/deltaf
 python surfaces.py runs 1 figures/surfaces
 python differences.py runs reference.npz 1 figures/differences

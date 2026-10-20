@@ -8,7 +8,8 @@ TRUTH.npz the reference surface from reference.py. Draws, against the
 reference and over time, the basin free energy error, the surface error of
 single runs, and the surface error of the average of all runs. Surface errors
 are RMS deviations where the reference is below 5 kcal/mol, after removing
-the mean offset. OUTFILE gets .png and .svg versions.
+the mean offset. OUTFILE gets .png and .svg versions. With --dark, the figure
+has light text and lines on a transparent background, for dark mode.
 """
 
 import argparse
@@ -23,6 +24,9 @@ SHOW = {
     "opes-corrected": ("OPES, smoothing-corrected", "-.", "#009E73"),
     "metad": ("Well-tempered MetaD", "--", "#D55E00"),
 }
+# Lighter versions of the same hues, legible on a dark background.
+DARK_COLORS = {"opes": "#56B4E9", "opes-corrected": "#2DCB98", "metad": "#F5874A"}
+DARK_TEXT = "#E6EDF3"  # GitHub's dark-mode foreground
 
 
 def curves(runs, truth, phi):
@@ -51,15 +55,36 @@ def main():
     parser.add_argument("runs_dir", type=Path)
     parser.add_argument("truth", type=Path)
     parser.add_argument("outfile", type=Path)
+    parser.add_argument(
+        "--dark",
+        action="store_true",
+        help="light text and lines on a transparent background, for dark mode",
+    )
     args = parser.parse_args()
     sets = load(args.runs_dir)
     truth = np.load(args.truth)["fes"]
 
     plt.rcParams.update({"font.size": 8, "axes.linewidth": 0.8, "lines.linewidth": 1.4})
+    if args.dark:
+        plt.rcParams.update(
+            dict.fromkeys(
+                (
+                    "text.color",
+                    "axes.labelcolor",
+                    "axes.edgecolor",
+                    "xtick.color",
+                    "ytick.color",
+                ),
+                DARK_TEXT,
+            )
+        )
+        plt.rcParams.update({"legend.facecolor": "none", "legend.edgecolor": DARK_TEXT})
     fig, axs = plt.subplots(1, 3, figsize=(7.2, 2.9), layout="constrained")
     phi = sets["metad"][0][2]
 
     for key, (name, style, color) in SHOW.items():
+        if args.dark:
+            color = DARK_COLORS[key]
         runs = sets[key]
         times = runs[0][0]
         perRun, average = curves(runs, truth, phi)
@@ -91,7 +116,7 @@ def main():
             -0.16, 1.04, label, transform=ax.transAxes, fontweight="bold", fontsize=10
         )
     for suffix in (".png", ".svg"):
-        fig.savefig(args.outfile.with_suffix(suffix), dpi=200)
+        fig.savefig(args.outfile.with_suffix(suffix), dpi=200, transparent=args.dark)
 
 
 if __name__ == "__main__":
