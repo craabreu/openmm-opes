@@ -110,6 +110,42 @@ averages over past ones, and PLUMED advises against reweighting with it: use
 it to check that the bias has converged. On alanine dipeptide, the
 current-bias estimate is the more accurate one after about 2 ns.
 
+## Smoothing correction
+
+A kernel estimate is the true density convolved with the kernels, so to
+leading order it overshoots by $\tfrac{1}{2}h^2\nabla^2 P$. In free energy
+terms, basin floors come out too high and steep walls too low. Silverman's rule
+narrows new kernels only slowly, and old kernels keep their width, so this
+bias fades slowly.
+
+`getFreeEnergy(correctSmoothing=True)` removes it with the multiplicative
+correction of Jones, Linton and Nielsen (Biometrika 82, 327 (1995)). A pilot
+estimate $\tilde P$ uses the same kernels broadened by `pilotFactor`. Each
+kernel's weight is divided by $\tilde P$ at its center, so the reweighted
+samples follow the nearly flat ratio $P/\tilde P$, which the broad kernels
+smooth at little cost in bias:
+
+$$\hat P(\mathbf{s}) = \tilde P(\mathbf{s})\,
+\frac{\sum_k w_k\, \tilde G_k(\mathbf{s}) / \tilde P(\mathbf{s}_k)}{\sum_k w_k}$$
+
+The bias drops to order $h^4$, while the broad kernels keep the noise of a
+single run low. The product does not conserve probability locally, which would
+shift free energy differences between basins, so the result is rescaled to
+carry, over a few pilot widths, the probability of the standard estimate.
+
+On alanine dipeptide, sixteen 50 ns runs gave these RMS errors against a
+reference surface, below 5 kcal/mol, in kcal/mol:
+
+| Estimate | Single run | Average of 16 runs |
+|---|---|---|
+| Standard | 0.099 | 0.055 |
+| Corrected, `pilotFactor=2` | 0.059 | 0.026 |
+
+Basin free energy differences were unchanged. The correction needs the
+broadened kernels to be narrow compared with the basins; early in a run, while
+kernels are still wide, it can make the surface worse. It changes only the
+reported free energy, not the bias.
+
 ## Kernel compression
 
 Rather than storing a bias grid, kernels closer than `compressionThreshold` in

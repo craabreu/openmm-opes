@@ -131,6 +131,18 @@ separate estimate that reweights every sample by the total bias.
 `getComponentBiases()` and `getComponentBiasEnergies(context)` give the two
 parts separately.
 
+## Correcting the smoothing bias
+
+Kernel smoothing makes steep basin walls too low and basin floors too high. To
+remove that bias from the reported surface, ask for it explicitly:
+
+```python
+fes = sampler.getFreeEnergy(correctSmoothing=True)
+```
+
+It also lowers the noise of a single run, but it needs kernels narrow compared
+with the basins, so use it on well-converged runs. See the theory page.
+
 ## Several samplers at once
 
 More generally, several samplers can bias the same simulation, each depositing

@@ -414,7 +414,7 @@ class OPES:
             kde.getLogPDF() - kde.getLogMeanDensity(), self._logEpsilon
         )
 
-    def getFreeEnergy(self):
+    def getFreeEnergy(self, correctSmoothing: bool = False, pilotFactor: float = 2.0):
         """Free energy as a function of the collective variables.
 
         Returned as an N-dimensional array in kJ/mole. The i'th position along
@@ -428,8 +428,26 @@ class OPES:
         samples there is no density to take a logarithm of. Unlike
         :meth:`getBias`, this has no defined limit to fall back on, and it
         never reaches the forces.
+
+        Parameters
+        ----------
+        correctSmoothing
+            Whether to remove the smoothing bias of the kernel estimate, which
+            makes steep basin walls too low and basin floors too high. Uses
+            :meth:`OnlineKDE.getCorrectedLogPDF`, a multiplicative correction
+            that also lowers the noise of a single run, at the cost of a few
+            evaluations of the kernels per call. Free energy differences
+            between basins are unchanged. It helps once the kernels are
+            narrow next to the basins, but early in a run, while they are
+            still wide, it can make the surface worse.
+        pilotFactor
+            Broadening of the pilot kernels in that correction. Values of 1.5
+            to 3 work well; wider pilots leave more bias.
         """
-        return -self._kbt * self._kde["total.rw"].getLogPDF()
+        kde = self._kde["total.rw"]
+        if correctSmoothing:
+            return -self._kbt * kde.getCorrectedLogPDF(pilotFactor)
+        return -self._kbt * kde.getLogPDF()
 
     def getCt(self, estimate="current"):
         """c(t), the reweighting constant of the time-dependent bias.
