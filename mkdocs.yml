@@ -48,4 +48,10 @@ nav:
   - Home: index.md
   - Quickstart: quickstart.md
   - Theory: theory.md
-  - API reference: api.md
+  - API reference:
+      - Overview: api/index.md
+      - OPES: api/opes.md
+      - CombinedOPES: api/combined-opes.md
+      - OnlineKDE: api/online-kde.md
+      - CVSpace: api/cv-space.md
+      - Kernel: api/kernel.md

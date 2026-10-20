@@ -13,15 +13,15 @@ Usage:
     python reference.py table NPZ OUTFILE
     python reference.py plot NPZ OUTFILE
 
-``run`` simulates under the static bias built from METAD_DIR/metad_*.npz and
-saves phi, psi and the bias energy felt every ps. ``kde`` reweights all
+`run` simulates under the static bias built from METAD_DIR/metad_*.npz and
+saves phi, psi and the bias energy felt every ps. `kde` reweights all
 samples in RUNS_DIR and estimates F(phi, psi) on the shared grid with product
 von Mises kernels of concentrations kappa and 2 kappa (1/rad^2; kappa = 800
 means a width of about 0.035 rad), extrapolated to zero kernel width, with
 jackknife standard errors over runs, and dF between the phi > 0 and phi < 0
-halves straight from the weighted samples. ``table`` writes that surface as a
+halves straight from the weighted samples. `table` writes that surface as a
 plain-text table with a header describing the system and the method, and
-``plot`` draws it with its standard error.
+`plot` draws it with its standard error.
 """
 
 from __future__ import annotations

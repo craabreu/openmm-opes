@@ -28,11 +28,11 @@ class CombinedOPES:
     * the explore component estimates its target distribution from the
       unweighted samples (Eq. 8), which feel both biases.
 
-    The total bias is V_opes + V_explore. Neither component estimates the
-    unbiased distribution by itself, so a third estimate reweights every sample
-    by exp(beta (V_opes + V_explore)), the paper's Eq. 14, and
-    :meth:`getFreeEnergy` returns it. Its kernels are sized as those of the
-    explore component's reweighted estimate.
+    The total bias is V_opes + V_explore. Neither component estimates the unbiased
+    distribution by itself, so a third estimate reweights every sample by exp(beta
+    (V_opes + V_explore)), the paper's Eq. 14, and
+    [`getFreeEnergy`][openmm_opes.combined.CombinedOPES.getFreeEnergy] returns it. Its
+    kernels are sized as those of the explore component's reweighted estimate.
 
     Both components share one bias force, so the CVs are computed once per
     step. To weight OPES kernels by the OPES bias alone, the explore part of
@@ -52,38 +52,40 @@ class CombinedOPES:
         The barrier of the OPES component, Delta E_OPES.
     exploreBarrier: energy
         The barrier of the OPES-explore component, Delta E_EXPLORE. The paper
-        finds systematic errors when it exceeds ``barrier``, and a warning is
+        finds systematic errors when it exceeds `barrier`, and a warning is
         issued in that case.
     frequency: int
         Interval in time steps at which both components deposit a kernel.
     varianceFrequency: int or None
         Interval in time steps at which to update the CV variance, or None for
-        a fixed bandwidth taken from each variable's ``biasWidth``. See
-        :class:`OPES`.
+        a fixed bandwidth taken from each variable's `biasWidth`. See
+        [`OPES`][openmm_opes.opes.OPES].
     biasFactor: float, optional
-        The OPES bias factor. Defaults to ``barrier / kT``.
+        The OPES bias factor. Defaults to `barrier / kT`.
     exploreBiasFactor: float, optional
-        The OPES-explore bias factor. Defaults to ``exploreBarrier / kT``.
+        The OPES-explore bias factor. Defaults to `exploreBarrier / kT`.
     saveFrequency: int, optional
         Interval in time steps at which to share the bias on disk.
     biasDir: str, optional
         Directory shared with other walkers. Each component uses its own
         subdirectory.
     walkerId: int, optional
-        This walker's identifier within ``biasDir``. See :class:`OPES`.
+        This walker's identifier within `biasDir`. See [`OPES`][openmm_opes.opes.OPES].
     extraBias: list, optional
-        Other biases acting on the simulation, as in :class:`OPES`. They join
-        the weights of the OPES kernels and of the free energy estimate.
+        Other biases acting on the simulation, as in [`OPES`][openmm_opes.opes.OPES].
+        They join the weights of the OPES kernels and of the free energy estimate.
     bounded: bool
-        Whether non-periodic CVs have reflective boundaries. See :class:`OPES`.
+        Whether non-periodic CVs have reflective boundaries. See
+        [`OPES`][openmm_opes.opes.OPES].
     warmupSteps: int, optional
-        Unbiased steps for measuring the CV variance. See :class:`OPES`.
+        Unbiased steps for measuring the CV variance. See
+        [`OPES`][openmm_opes.opes.OPES].
     compressionThreshold: float
         Mahalanobis distance below which kernels are merged.
     useExistingBandwidths: bool
         Whether the merge search scales by existing kernels' bandwidths.
     kernelShape: str
-        ``"gaussian"`` or ``"compact"``.
+        `"gaussian"` or `"compact"`.
     statsWindowSize: int
         Window, in deposition strides, of the running CV-mean estimate.
     minBandwidth: list of float, optional
@@ -199,8 +201,9 @@ class CombinedOPES:
     def step(self, simulation, steps) -> None:
         """Advance the simulation by a number of time steps.
 
-        A CombinedOPES can also be passed to :meth:`OPES.stepTogether` along
-        with other samplers.
+        A CombinedOPES can also be passed to
+        [`OPES.stepTogether`][openmm_opes.opes.OPES.stepTogether] along with other
+        samplers.
         """
         OPES.stepTogether(simulation, [self], steps)
 
@@ -229,8 +232,8 @@ class CombinedOPES:
     def updateContext(self, context) -> None:
         """Push the current biases into a Context.
 
-        Each table stores its component's bias shifted up by that component's
-        barrier, so the unexplored floor sits at 0, as in :class:`OPES`.
+        Each table stores its component's bias shifted up by that component's barrier,
+        so the unexplored floor sits at 0, as in [`OPES`][openmm_opes.opes.OPES].
         """
         for index, component in enumerate(self._components.values()):
             bias = component.getBias() + component.barrier
@@ -286,17 +289,18 @@ class CombinedOPES:
 
         The estimate reweights every sample by the total bias, Eq. 14 of Ray and
         Rizzi. The grid and the smoothing correction follow
-        :meth:`OPES.getFreeEnergy`.
+        [`OPES.getFreeEnergy`][openmm_opes.opes.OPES.getFreeEnergy].
         """
         return self._components["explore"].getFreeEnergy(correctSmoothing, pilotFactor)
 
     def getCt(self, estimate="current"):
         """c(t) of the total bias, V_opes + V_explore.
 
-        ``"current"`` averages exp(-beta V) over the free energy estimate of
-        :meth:`getFreeEnergy`; ``"running"`` is kT ln of the mean weight of its
-        samples, with an initial sample under the flat bias
-        -(barrier + exploreBarrier). See :meth:`OPES.getCt`.
+        `"current"` averages exp(-beta V) over the free energy estimate of
+        [`getFreeEnergy`][openmm_opes.combined.CombinedOPES.getFreeEnergy]; `"running"`
+        is kT ln of the mean weight of its samples, with an initial sample under the
+        flat bias -(barrier + exploreBarrier). See
+        [`OPES.getCt`][openmm_opes.opes.OPES.getCt].
         """
         explore = self._components["explore"]
         if estimate == "running":
@@ -327,10 +331,13 @@ class CombinedOPES:
         }
 
     def setState(self, state) -> None:
-        """Restore from a :meth:`getState` snapshot.
+        """Restore both components from a snapshot.
 
-        The restored bias reaches the simulation at the start of the next
-        :meth:`step`, or sooner through :meth:`updateContext`.
+        The snapshot comes from
+        [`getState`][openmm_opes.combined.CombinedOPES.getState]. The restored bias
+        reaches the simulation at the start of the next
+        [`step`][openmm_opes.combined.CombinedOPES.step], or sooner through
+        [`updateContext`][openmm_opes.combined.CombinedOPES.updateContext].
         """
         for name, component in self._components.items():
             prefix = f"{name}_"

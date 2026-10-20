@@ -24,7 +24,7 @@ per OPES variant acting, and OUTFILE.bias the final total bias on a grid of x,
 with columns x (nm) and bias (kJ/mol).
 
 PLUMED must be built with the opes module; see README.md. PLUMED runs
-evaluate their final bias with ``plumed driver``, found at $PLUMED/bin/plumed
+evaluate their final bias with `plumed driver`, found at $PLUMED/bin/plumed
 unless --plumed-exe says otherwise.
 """
 
@@ -82,9 +82,9 @@ def x_variable():
 def plumed_actions(mode, outfile, steps=None):
     """The OPES actions of a PLUMED input, and the labels of their biases.
 
-    With ``steps``, each action writes its state at the last deposition,
+    With `steps`, each action writes its state at the last deposition,
     step steps - PACE: openmm-plumed calls PLUMED before each step, so the
-    last step it sees is steps - 1. Without ``steps``, each action restarts
+    last step it sees is steps - 1. Without `steps`, each action restarts
     from that state with a pace too long to deposit anything.
     Each run gets its own files: PLUMED backs up an existing file before
     overwriting it and aborts after 100 backups.

@@ -1,7 +1,7 @@
 """The OPES bias, integrated with OpenMM as a CustomCVForce.
 
-Closely mirrors ``openmm.app.Metadynamics``: same constructor shape, same
-unit-coercion idiom, same force-group selection, same ``step`` contract.
+Closely mirrors `openmm.app.Metadynamics`: same constructor shape, same
+unit-coercion idiom, same force-group selection, same `step` contract.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ class RunningAverage:
         return {"num": float(self._num), "total": self._total.copy()}
 
     def setState(self, state) -> None:
-        """Restore from a :meth:`getState` snapshot."""
+        """Restore from a `getState` snapshot."""
         self._num = int(state["num"])
         self._total = np.asarray(state["total"]).copy()
 
@@ -97,7 +97,7 @@ class ExtraBias:
     """Energies of other biases acting on a simulation, for reweighting.
 
     Each item is a force group (int), an OpenMM Force, whose group is read at
-    evaluation time, or an object with a ``getBiasEnergy(context)`` method,
+    evaluation time, or an object with a `getBiasEnergy(context)` method,
     such as another sampler. The whole energy of each group counts, so give
     the extra biases groups of their own.
     """
@@ -137,7 +137,7 @@ class ExtraBias:
 
 
 def tabulatedFunction(widths, values, limits, periodic):
-    """A 1-3D OpenMM tabulated function; ``widths`` is empty in one dimension."""
+    """A 1-3D OpenMM tabulated function; `widths` is empty in one dimension."""
     if not widths:
         return mm.Continuous1DFunction(values, *limits, periodic)
     if len(widths) == 2:
@@ -167,25 +167,25 @@ class OPES:
         Interval in time steps at which to deposit a kernel.
     varianceFrequency: int or None
         Interval in time steps at which to update the CV variance. When None,
-        the bandwidth is fixed and taken from each variable's ``biasWidth``,
+        the bandwidth is fixed and taken from each variable's `biasWidth`,
         which is interpreted as the standard deviation of the UNBIASED
         distribution, exactly as both papers define sigma^(0).
     biasFactor: float, optional
-        Defaults to ``barrier / kT``. Must be finite: unlike PLUMED, the
-        uniform-target limit ``inf`` is not supported.
+        Defaults to `barrier / kT`. Must be finite: unlike PLUMED, the
+        uniform-target limit `inf` is not supported.
     exploreMode: bool
-        Whether to apply the OPES-explore variant. Must match the mode of a
-        snapshot passed to :meth:`setState` and of every walker sharing
-        ``biasDir``.
+        Whether to apply the OPES-explore variant. Must match the mode of a snapshot
+        passed to [`setState`][openmm_opes.opes.OPES.setState] and of every walker
+        sharing `biasDir`.
     bounded: bool
         Whether non-periodic CVs have reflective boundaries.
     saveFrequency: int, optional
         Interval in time steps at which to share the bias on disk. Must be a
-        multiple of ``frequency``.
+        multiple of `frequency`.
     biasDir: str, optional
         Directory shared with other walkers.
     walkerId: int, optional
-        This walker's identifier within ``biasDir``. Random when omitted; pass
+        This walker's identifier within `biasDir`. Random when omitted; pass
         a stable value across restarts so a resumed walker reclaims its own
         file rather than leaving the previous run's behind as a phantom peer.
     warmupSteps: int, optional
@@ -196,7 +196,7 @@ class OPES:
     useExistingBandwidths: bool
         Whether the merge search scales by existing kernels' bandwidths.
     kernelShape: str
-        ``"gaussian"`` or ``"compact"``.
+        `"gaussian"` or `"compact"`.
     statsWindowSize: int
         Window, in deposition strides, of the running CV-mean estimate. With
         an adaptive variance, the first kernel also waits this many strides,
@@ -208,7 +208,7 @@ class OPES:
         Other biases acting on the simulation, as PLUMED's EXTRA_BIAS: each
         sample is weighted by exp(beta (V + V_extra)), so that the free energy
         estimate removes them too. Items are force groups, Forces, or objects
-        with a ``getBiasEnergy(context)`` method, such as other samplers. The
+        with a `getBiasEnergy(context)` method, such as other samplers. The
         bias itself still follows the density estimate as usual. In explore
         mode, only the reweighted estimate changes; PLUMED offers EXTRA_BIAS
         for OPES_METAD only.
@@ -419,27 +419,27 @@ class OPES:
 
         Returned as an N-dimensional array in kJ/mole. The i'th position along
         an axis corresponds to
-        ``minValue + i*(maxValue-minValue)/(gridWidth-1)``, matching the
-        ``numpy.linspace(minValue, maxValue, gridWidth)`` axis the estimate is
+        `minValue + i*(maxValue-minValue)/(gridWidth-1)`, matching the
+        `numpy.linspace(minValue, maxValue, gridWidth)` axis the estimate is
         built on. Always the importance-sampling estimate, which converges
         better than the direct one in explore mode.
 
-        Every entry is NaN until the first kernel is deposited: with no
-        samples there is no density to take a logarithm of. Unlike
-        :meth:`getBias`, this has no defined limit to fall back on, and it
-        never reaches the forces.
+        Every entry is NaN until the first kernel is deposited: with no samples there is
+        no density to take a logarithm of. Unlike
+        [`getBias`][openmm_opes.opes.OPES.getBias], this has no defined limit to fall
+        back on, and it never reaches the forces.
 
         Parameters
         ----------
         correctSmoothing
-            Whether to remove the smoothing bias of the kernel estimate, which
-            makes steep basin walls too low and basin floors too high. Uses
-            :meth:`OnlineKDE.getCorrectedLogPDF`, a multiplicative correction
-            that also lowers the noise of a single run, at the cost of a few
-            evaluations of the kernels per call. Free energy differences
-            between basins are unchanged. It helps once the kernels are
-            narrow next to the basins, but early in a run, while they are
-            still wide, it can make the surface worse.
+            Whether to remove the smoothing bias of the kernel estimate, which makes
+            steep basin walls too low and basin floors too high. Uses
+            [`OnlineKDE.getCorrectedLogPDF`][openmm_opes.kde.OnlineKDE.getCorrectedLogPDF],
+            a multiplicative correction that also lowers the noise of a single run, at
+            the cost of a few evaluations of the kernels per call. Free energy
+            differences between basins are unchanged. It helps once the kernels are
+            narrow next to the basins, but early in a run, while they are still wide, it
+            can make the surface worse.
         pilotFactor
             Broadening of the pilot kernels in that correction. Values of 1.5
             to 3 work well; wider pilots leave more bias.
@@ -456,15 +456,15 @@ class OPES:
         removes the bias even while it still changes. Two estimates are
         available:
 
-        * ``"current"``: -kT ln <exp(-beta V_n)> over the reweighted density
+        * `"current"`: -kT ln <exp(-beta V_n)> over the reweighted density
           estimate P_n, for the bias acting now. It needs a reasonable P_n
           and is then unbiased.
-        * ``"running"``: PLUMED's ``rct`` component, kT ln of the mean weight
+        * `"running"`: PLUMED's `rct` component, kT ln of the mean weight
           of all samples so far, including one fictitious sample under the
           initial flat bias -barrier. It averages over past biases, so it
           lags behind the current one. Like PLUMED, which warns against
-          reweighting with ``rct``, treat it as a convergence diagnostic: it
-          should level off as the bias converges. With ``extraBias``, the
+          reweighting with `rct`, treat it as a convergence diagnostic: it
+          should level off as the bias converges. With `extraBias`, the
           weights include the extra biases.
 
         The current estimate is NaN before the first kernel.
@@ -484,7 +484,8 @@ class OPES:
     def getAverageDensity(self):
         """Z_n, the mean density over the explored CV space.
 
-        NaN until the first kernel is deposited, like :meth:`getFreeEnergy`.
+        NaN until the first kernel is deposited, like
+        [`getFreeEnergy`][openmm_opes.opes.OPES.getFreeEnergy].
         """
         kde = self._kde[self._biasKey]
         return np.exp(kde.getLogMeanDensity())
@@ -497,10 +498,10 @@ class OPES:
         """Push the current bias into a Context.
 
         The table stores V + barrier, so the energy the force contributes is
-        the bias shifted up by ``barrier``: the unexplored floor sits at 0.
+        the bias shifted up by `barrier`: the unexplored floor sits at 0.
         OpenMM's tabulated functions are zero outside their range, so a CV
-        that leaves ``[minValue, maxValue]`` sees the bias of a region
-        nothing has been deposited in, rather than a jump of ``barrier``.
+        that leaves `[minValue, maxValue]` sees the bias of a region
+        nothing has been deposited in, rather than a jump of `barrier`.
         """
         bias = (self.getBias() + self.barrier).value_in_unit(unit.kilojoules_per_mole)
         self._force.getTabulatedFunction(0).setFunctionParameters(
@@ -516,8 +517,9 @@ class OPES:
         variance estimate is skipped rather than deposited, since a zero
         bandwidth gives the kernel -inf log height and poisons the estimate.
 
-        This does not refresh any Context; call :meth:`updateContext`
-        afterwards if a simulation is running.
+        This does not refresh any Context; call
+        [`updateContext`][openmm_opes.opes.OPES.updateContext] afterwards if a
+        simulation is running.
         """
         if not unit.is_quantity(biasEnergy):
             biasEnergy = biasEnergy * unit.kilojoules_per_mole
@@ -735,7 +737,7 @@ class OPES:
     def _rescaleUnbiasedVariance(self) -> None:
         """Turn the variance measured before the first kernel into a sampled one.
 
-        The adaptive bandwidth waits ``statsWindowSize`` deposition strides
+        The adaptive bandwidth waits `statsWindowSize` deposition strides
         before the first kernel, so every sample accumulated so far is
         unbiased. _variance holds a sampled-distribution variance by
         convention, which is gamma times wider than the unbiased one, so the
@@ -784,13 +786,14 @@ class OPES:
         return state
 
     def setState(self, state) -> None:
-        """Restore from a :meth:`getState` snapshot.
+        """Restore from a [`getState`][openmm_opes.opes.OPES.getState] snapshot.
 
         A snapshot from a single-walker run seeds this walker's own
         contribution to the shared bias, since that run had no peers.
 
         The restored bias reaches the simulation at the start of the next
-        :meth:`step`. Call :meth:`updateContext` to push it into a Context
+        [`step`][openmm_opes.opes.OPES.step]. Call
+        [`updateContext`][openmm_opes.opes.OPES.updateContext] to push it into a Context
         sooner, e.g. before computing energies.
         """
         self._checkMode(state, "The snapshot")
