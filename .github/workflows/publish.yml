@@ -14,6 +14,9 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install build twine
+      # PyPI cannot resolve the README's relative links and images, so pin
+      # them to this release's tag before building the package description.
+      - run: python .github/scripts/absolute_readme_links.py README.md "$GITHUB_REF_NAME"
       - run: python -m build
       # Fails loudly on a version mismatch rather than silently publishing
       # the wrong artifact if a release tag and pyproject.toml diverge.
