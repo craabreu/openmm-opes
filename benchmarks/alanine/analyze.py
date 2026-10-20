@@ -1,7 +1,7 @@
 """
 Convergence of the alanine dipeptide free energy surface from run.py outputs.
 
-Usage: python analyze.py RUNS_DIR
+Usage: python analyze.py RUNS_DIR [--truth TRUTH.npz]
 
 Files are named LABEL_SEED.npz, and runs sharing a LABEL form one set. Each
 set is judged against itself: its target is the surface obtained by averaging
@@ -13,19 +13,24 @@ time, as the mean +/- standard error over seeds:
 
 * |dF - dF_target|, with dF = F(phi > 0) - F(phi < 0) the free energy of the
   alpha_L / C7ax region relative to the C7eq / C5 region;
-* the RMS deviation from the target surface where it is within CUTOFF of its
-  minimum, after removing the mean offset over that region.
+* the RMS deviation from the target surface where it is within CUTOFF,
+  5 kcal/mol, of its minimum, after removing the mean offset over that region.
+
+With --truth, a ground-truth surface from reference.py (key "fes", on the
+shared grid without its periodic copies), each run is also judged against it,
+which measures accuracy rather than self-consistency.
 """
 
-import sys
+import argparse
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 
 KB = 0.0083144626  # kJ/mol/K
-KT = KB * 300.0
-CUTOFF = 20.0  # kJ/mol
+KT = KB * 300.0  # kJ/mol, the unit of the saved surfaces
+KCAL = 4.184  # kJ per kcal
+CUTOFF = 5.0 * KCAL  # 5 kcal/mol
 TIMES = [1, 2, 5, 10, 20, 50]
 
 
@@ -70,33 +75,52 @@ def load(directory):
     return sets
 
 
+def report(label, runs, targets, target_df, phi, kind):
+    for name in METRICS:
+        cells = []
+        for t in TIMES:
+            values = []
+            for i, (times, fes, _) in enumerate(runs):
+                index = np.searchsorted(times, t - 1e-9)
+                if index < len(times):
+                    values.append(
+                        metric(name, fes[index], targets[i], target_df[i], phi)
+                    )
+            if len(values) > 1:
+                mean = np.mean(values) / KCAL
+                error = np.std(values, ddof=1) / np.sqrt(len(values)) / KCAL
+                cells.append(f"{t:>3g} ns {mean:5.2f}+/-{error:4.2f}")
+        print(f"{label:17s} {kind:5s} {name:13s} n={len(runs):2d}  " + "  ".join(cells))
+
+
 def main():
-    sets = load(sys.argv[1])
-    print("mean +/- standard error over seeds, kJ/mol, each run against the")
-    print("final average of the other runs in its set")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("runs_dir", type=Path)
+    parser.add_argument("--truth", type=Path)
+    args = parser.parse_args()
+    sets = load(args.runs_dir)
+    truth = None if args.truth is None else np.load(args.truth)["fes"]
+    print("mean +/- standard error over seeds, kcal/mol; LOO: against the final")
+    print("average of the other runs in the set; truth: against the ground truth")
     for label, runs in sorted(sets.items()):
         phi = runs[0][2]
         finals = [fes[-1] for _, fes, _ in runs]
         targets = [combine(finals[:i] + finals[i + 1 :]) for i in range(len(runs))]
         target_df = [delta_f(t, phi) for t in targets]
-        for name in METRICS:
-            cells = []
-            for t in TIMES:
-                values = []
-                for i, (times, fes, _) in enumerate(runs):
-                    index = np.searchsorted(times, t - 1e-9)
-                    if index < len(times):
-                        values.append(
-                            metric(name, fes[index], targets[i], target_df[i], phi)
-                        )
-                if len(values) > 1:
-                    mean = np.mean(values)
-                    error = np.std(values, ddof=1) / np.sqrt(len(values))
-                    cells.append(f"{t:>3g} ns {mean:5.2f}+/-{error:4.2f}")
-            print(f"{label:17s} {name:13s} n={len(runs):2d}  " + "  ".join(cells))
+        report(label, runs, targets, target_df, phi, "LOO")
+        if truth is not None:
+            report(
+                label,
+                runs,
+                [truth] * len(runs),
+                [delta_f(truth, phi)] * len(runs),
+                phi,
+                "truth",
+            )
         full = combine(finals)
         print(
-            f"{label:17s} final dF of the set average: {delta_f(full, phi):.3f} kJ/mol"
+            f"{label:17s} final dF of the set average:"
+            f" {delta_f(full, phi) / KCAL:.3f} kcal/mol"
         )
 
 
