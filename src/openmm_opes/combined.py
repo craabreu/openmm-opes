@@ -74,11 +74,20 @@ class CombinedOPES:
     extraBias: list, optional
         Other biases acting on the simulation, as in :class:`OPES`. They join
         the weights of the OPES kernels and of the free energy estimate.
-
-    The remaining parameters, ``bounded``, ``warmupSteps``,
-    ``compressionThreshold``, ``useExistingBandwidths``, ``kernelShape``,
-    ``statsWindowSize`` and ``minBandwidth``, apply to both components and are
-    described in :class:`OPES`.
+    bounded: bool
+        Whether non-periodic CVs have reflective boundaries. See :class:`OPES`.
+    warmupSteps: int, optional
+        Unbiased steps for measuring the CV variance. See :class:`OPES`.
+    compressionThreshold: float
+        Mahalanobis distance below which kernels are merged.
+    useExistingBandwidths: bool
+        Whether the merge search scales by existing kernels' bandwidths.
+    kernelShape: str
+        ``"gaussian"`` or ``"compact"``.
+    statsWindowSize: int
+        Window, in deposition strides, of the running CV-mean estimate.
+    minBandwidth: list of float, optional
+        Per-CV floor on the bandwidth of new kernels. None by default.
     """
 
     def __init__(
