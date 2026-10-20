@@ -36,17 +36,20 @@ PLUMED's `OPES_METAD` and `OPES_METAD_EXPLORE`.
 
 ## Installation
 
+With conda, from the [mdtools](https://anaconda.org/mdtools) channel, with
+OpenMM and the other dependencies from conda-forge:
+
+```bash
+conda install -c conda-forge -c mdtools openmm-opes
+```
+
+Or with pip:
+
 ```bash
 pip install openmm-opes
 ```
 
-It needs Python 3.11 or later and OpenMM 8.1 or later. OpenMM can also come
-from conda-forge:
-
-```bash
-conda install -c conda-forge openmm
-pip install openmm-opes
-```
+It needs Python 3.11 or later and OpenMM 8.1 or later.
 
 ## Quick start
 
