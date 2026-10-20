@@ -281,13 +281,14 @@ class CombinedOPES:
         """The OPES and OPES-explore bias potentials on the grid."""
         return tuple(c.getBias() for c in self._components.values())
 
-    def getFreeEnergy(self):
+    def getFreeEnergy(self, correctSmoothing: bool = False, pilotFactor: float = 2.0):
         """Free energy as a function of the collective variables.
 
         The estimate reweights every sample by the total bias, Eq. 14 of Ray and
-        Rizzi. The grid follows :meth:`OPES.getFreeEnergy`.
+        Rizzi. The grid and the smoothing correction follow
+        :meth:`OPES.getFreeEnergy`.
         """
-        return self._components["explore"].getFreeEnergy()
+        return self._components["explore"].getFreeEnergy(correctSmoothing, pilotFactor)
 
     def getCt(self, estimate="current"):
         """c(t) of the total bias, V_opes + V_explore.

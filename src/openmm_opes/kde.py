@@ -10,6 +10,7 @@ from collections import namedtuple
 from copy import copy
 
 import numpy as np
+from scipy.special import logsumexp
 
 
 class CVSpace:
@@ -92,6 +93,30 @@ class CVSpace:
                 distances[dim] -= length * np.rint(distances[dim] / length)
                 distances[dim][-1] = distances[dim][0]
         return distances
+
+    def axisGridDistances(self, index, centers):
+        """Distances from each of ``centers`` to every node of one axis.
+
+        A 2-D array, one row per center, matching :meth:`gridDistances` for a
+        single center: minimum-image on a periodic axis, whose last node
+        repeats the first, and over the tripled grid on a reflective axis.
+        """
+        distances = (
+            self._grid[index][np.newaxis, :] - np.asarray(centers)[:, np.newaxis]
+        )
+        cv = self.variables[index]
+        if cv.periodic:
+            length = cv.maxValue - cv.minValue
+            distances -= length * np.rint(distances / length)
+            distances[:, -1] = distances[:, 0]
+        return distances
+
+    def foldedAxisRows(self, index, values):
+        """:meth:`foldedAxis` applied to every row of a 2-D array of log profiles."""
+        if self.bounded and not self.variables[index].periodic:
+            values, left, right = np.array_split(values, 3, axis=1)
+            values = np.logaddexp(left, np.logaddexp(values, right))
+        return values
 
     def closestNode(self, position) -> tuple[int, ...]:
         """Index of the grid node nearest to ``position``, in gridShape order."""
@@ -517,36 +542,114 @@ class OnlineKDE:
             logKernels = logKernels + np.logaddexp.reduce(terms, axis=0)
         return np.logaddexp.reduce(logKernels)
 
+    #: Kernels contracted together by _logMixtureOnGrid, which bounds its
+    #: temporary arrays to this many times the grid size.
+    GRID_CHUNK_SIZE = 512
+
+    def _logMixtureOnGrid(self, positions, bandwidths, logHeights):
+        """Log of sum_k exp(logHeights[k]) G_k on the grid, in gridShape order.
+
+        The kernels factorize over the axes, so their sum on the grid is a
+        tensor contraction of per-axis profiles over the kernel index, done
+        with BLAS instead of one grid evaluation per kernel. To stay in range,
+        each axis's profiles are scaled by their maximum over the kernels at
+        each node, and the heights by their maximum. Nodes where the scaled
+        sum still underflows, far from every kernel, are summed in log space.
+        """
+        space = self._cvSpace
+        if len(positions) == 0:
+            return np.full(space.gridShape, -np.inf)
+        logProfiles = [
+            space.foldedAxisRows(
+                i,
+                self._shape.exponents(
+                    space.axisGridDistances(i, positions[:, i])
+                    / bandwidths[:, i, np.newaxis]
+                ),
+            )
+            for i in range(space.numDimensions)
+        ]
+        peaks = [np.max(lp, axis=0) for lp in logProfiles]
+        finitePeaks = [np.where(np.isfinite(m), m, 0.0) for m in peaks]
+        scaled = [
+            np.exp(lp - m[np.newaxis, :])
+            for lp, m in zip(logProfiles, finitePeaks, strict=True)
+        ]
+        heightPeak = np.max(logHeights)
+        heights = np.exp(logHeights - heightPeak)
+        total = np.zeros(space.gridShape)
+        for start in range(0, len(positions), self.GRID_CHUNK_SIZE):
+            chunk = slice(start, start + self.GRID_CHUNK_SIZE)
+            # Outer product over all axes but the last, then contract with
+            # the last axis, which is the slowest in gridShape order.
+            rest = functools.reduce(
+                lambda acc, a: (a[:, :, np.newaxis] * acc[:, np.newaxis, :]).reshape(
+                    a.shape[0], -1
+                ),
+                [a[chunk] for a in scaled[:-1]],
+                np.ones((heights[chunk].size, 1)),
+            )
+            last = scaled[-1][chunk] * heights[chunk, np.newaxis]
+            total += (last.T @ rest).reshape(space.gridShape)
+        offset = heightPeak + functools.reduce(np.add.outer, reversed(peaks))
+        with np.errstate(divide="ignore"):
+            result = np.log(total) + offset
+        underflow = (total == 0) & np.isfinite(offset)
+        if np.any(underflow):
+            result[underflow] = self._logMixtureAtNodes(
+                np.argwhere(underflow), logProfiles, logHeights
+            )
+        return result
+
+    @staticmethod
+    def _logMixtureAtNodes(nodes, logProfiles, logHeights):
+        """Exact log-space sums at selected grid nodes (gridShape indices)."""
+        values = np.empty(len(nodes))
+        for n, node in enumerate(nodes):
+            terms = logHeights + sum(
+                lp[:, j] for lp, j in zip(logProfiles, reversed(node), strict=True)
+            )
+            values[n] = np.logaddexp.reduce(terms)
+        return values
+
+    def _logMixtureAtPoints(self, points, positions, bandwidths, logHeights):
+        """Log of sum_k exp(logHeights[k]) G_k at each of ``points``.
+
+        Vectorized over chunks of kernels and summed per axis over the mirror
+        images, as in :meth:`Kernel.evaluate`.
+        """
+        space = self._cvSpace
+        result = np.full(len(points), -np.inf)
+        for start in range(0, len(positions), self.CHUNK_SIZE):
+            stop = start + self.CHUNK_SIZE
+            logKernels = logHeights[start:stop, np.newaxis]
+            for i in range(space.numDimensions):
+                sigma = bandwidths[start:stop, i, np.newaxis]
+                terms = [
+                    self._shape.exponents(
+                        space.axisDisplacement(i, image[:, np.newaxis], points[:, i])
+                        / sigma
+                    )
+                    for image in space.axisImages(i, positions[start:stop, i])
+                ]
+                logKernels = logKernels + (
+                    terms[0] if len(terms) == 1 else logsumexp(terms, axis=0)
+                )
+            result = np.logaddexp(result, logsumexp(logKernels, axis=0))
+        return result
+
     #: Kernels evaluated together at every center by _logDensitiesAtCenters,
     #: which bounds its temporary arrays to this many times the kernel count.
     CHUNK_SIZE = 256
 
     def _logDensitiesAtCenters(self):
-        """Log of the unnormalized mixture density at every kernel center.
-
-        Vectorized over chunks of kernels and summed per axis over the mirror
-        images, as in :meth:`Kernel.evaluate`.
-        """
+        """Log of the unnormalized mixture density at every kernel center."""
         centers = self._positions
         if len(centers) == 0:
             return np.empty(0)
-        space = self._cvSpace
-        result = np.full(len(centers), -np.inf)
-        for start in range(0, len(centers), self.CHUNK_SIZE):
-            stop = start + self.CHUNK_SIZE
-            logKernels = self._logHeights[start:stop, np.newaxis]
-            for i in range(space.numDimensions):
-                sigma = self._bandwidths[start:stop, i, np.newaxis]
-                terms = [
-                    self._shape.exponents(
-                        space.axisDisplacement(i, image[:, np.newaxis], centers[:, i])
-                        / sigma
-                    )
-                    for image in space.axisImages(i, self._positions[start:stop, i])
-                ]
-                logKernels = logKernels + np.logaddexp.reduce(terms, axis=0)
-            result = np.logaddexp(result, np.logaddexp.reduce(logKernels, axis=0))
-        return result
+        return self._logMixtureAtPoints(
+            centers, centers, self._bandwidths, self._logHeights
+        )
 
     def _maxLogDrop(self):
         with np.errstate(invalid="ignore"):
@@ -564,10 +667,8 @@ class OnlineKDE:
         its peak since the last rebuild, so _pushKernel rebuilds once any
         value falls MAX_LOG_DROP below its peak.
         """
-        self._logPG = functools.reduce(
-            np.logaddexp,
-            (k.evaluateOnGrid() for k in self._kernels),
-            np.full(self._cvSpace.gridShape, -np.inf),
+        self._logPG = self._logMixtureOnGrid(
+            self._positions, self._bandwidths, self._logHeights
         )
         self._logPK = self._logDensitiesAtCenters()
         self._peakPK = self._logPK.copy()
@@ -632,6 +733,101 @@ class OnlineKDE:
         """
         with np.errstate(invalid="ignore"):
             return self._logPG - self._logSumW
+
+    def getCorrectedLogPDF(
+        self, pilotFactor: float = 2.0, iterations: int = 1, matchingScale: float = 5.0
+    ):
+        """Log density on the grid with the smoothing bias removed.
+
+        Kernel smoothing makes a density estimate too low on steep walls and
+        too high at the bottom of basins, to order h^2 in the bandwidth. This
+        applies the multiplicative bias correction of Jones, Linton and
+        Nielsen (Biometrika 82, 327 (1995)), which cuts the bias to order h^4
+        while keeping the estimate positive:
+
+        1. A pilot estimate P~ uses the same kernels, broadened by
+           ``pilotFactor``, which keeps its noise low.
+        2. Each kernel's weight is divided by P~ at its center, so the
+           reweighted samples follow P / P~, which is nearly flat.
+        3. Smoothing that ratio with the broad kernels costs little bias, and
+           P~ times the smoothed ratio estimates P.
+
+        ``iterations`` repeats steps 2 and 3 with the result as the pilot.
+        The product does not conserve probability locally, which would shift
+        free energy differences between basins. So the result is finally
+        rescaled to carry, at the length scale of ``matchingScale`` pilot
+        bandwidths, the same probability as the uncorrected estimate, which
+        conserves it kernel by kernel.
+
+        The correction needs the broadened kernels to stay narrow compared
+        with the features of the density, say a third of a basin's width.
+        Early in a run, when the kernels are still wide, it can do more harm
+        than good.
+
+        Only the reported density changes; the bias built from
+        :meth:`getLogPDF` does not. Costs a few evaluations of the broadened
+        kernels on the grid and at the kernel centers. NaN with no kernels.
+        """
+        standard = self.getLogPDF()
+        if not self._kernels:
+            return standard
+        positions, logWeights = self._positions, self._logWeights()
+        bandwidths = self._bandwidths * pilotFactor
+        logNorm = self._d * self._shape.logNorm + np.sum(np.log(bandwidths), axis=1)
+        logHeights = logWeights - logNorm
+        logGrid = self._logMixtureOnGrid(positions, bandwidths, logHeights)
+        logCenters = self._logMixtureAtPoints(
+            positions, positions, bandwidths, logHeights
+        )
+        for _ in range(iterations):
+            flattened = logHeights - logCenters
+            logGrid = logGrid + self._logMixtureOnGrid(positions, bandwidths, flattened)
+            logCenters = logCenters + self._logMixtureAtPoints(
+                positions, positions, bandwidths, flattened
+            )
+        corrected = logGrid - self._logSumW
+        weights = np.exp(logWeights - logWeights.max())
+        scales = matchingScale * (weights @ bandwidths) / weights.sum()
+        return corrected + self._massRatio(standard, corrected, scales)
+
+    def _logWeights(self):
+        return np.array([k.logWeight for k in self._kernels], dtype=float)
+
+    def _massRatio(self, logTarget, logSource, scales):
+        """Log of smooth(target) / smooth(source), Gaussian-smoothed per axis.
+
+        Zero where either smoothed density vanishes. On a periodic axis the
+        last node, which repeats the first, is left out of the smoothing and
+        copied back.
+        """
+        space = self._cvSpace
+        shifts = [np.nanmax(logTarget), np.nanmax(logSource)]
+        smoothed = []
+        for logDensity, shift in zip((logTarget, logSource), shifts, strict=True):
+            density = np.nan_to_num(np.exp(logDensity - shift))
+            for i, cv in enumerate(space.variables):
+                axis = space.numDimensions - 1 - i
+                nodes = np.linspace(cv.minValue, cv.maxValue, cv.gridWidth)
+                if cv.periodic:
+                    nodes = nodes[:-1]
+                    density = np.take(density, range(len(nodes)), axis=axis)
+                diff = nodes[:, np.newaxis] - nodes[np.newaxis, :]
+                if cv.periodic:
+                    length = cv.maxValue - cv.minValue
+                    diff -= length * np.rint(diff / length)
+                kernel = np.exp(-0.5 * (diff / scales[i]) ** 2)
+                density = np.moveaxis(
+                    np.tensordot(kernel, np.moveaxis(density, axis, 0), axes=1), 0, axis
+                )
+                if cv.periodic:
+                    first = np.take(density, [0], axis=axis)
+                    density = np.concatenate((density, first), axis=axis)
+            smoothed.append(density)
+        target, source = smoothed
+        valid = (target > 0) & (source > 0)
+        ratio = np.zeros_like(target)
+        ratio[valid] = np.log(target[valid] / source[valid])
+        return ratio + np.where(valid, shifts[0] - shifts[1], 0.0)
 
     def getLogMeanDensity(self) -> float:
         """Log of Z_n, the mean density over the compressed kernel centers.

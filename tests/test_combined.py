@@ -240,3 +240,14 @@ def test_step_together_accepts_a_combined_sampler_with_another_sampler():
     opesComponent = combined._components["opes"]._kde["total.rw"]
     assert sum(kernel.numSamples for kernel in opesComponent._kernels) == 30
     assert opes.getNumKernels() > 0
+
+
+def test_free_energy_can_correct_the_smoothing_bias():
+    combined, simulation = makeCombined()
+    combined.step(simulation, 3000)
+    estimate = combined._components["explore"]._kde["total.rw"]
+    kT = combined._components["explore"]._kbt.value_in_unit(KJ)
+    corrected = combined.getFreeEnergy(correctSmoothing=True, pilotFactor=1.5)
+    assert corrected.value_in_unit(KJ) == pytest.approx(
+        -kT * estimate.getCorrectedLogPDF(1.5)
+    )

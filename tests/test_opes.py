@@ -923,3 +923,20 @@ def test_explore_kernels_start_sqrt_gamma_wider_than_the_unbiased_width(
     assert first.bandwidth[0] == pytest.approx(
         np.sqrt(gamma * measured[0][0]) * silverman
     )
+
+
+def test_free_energy_can_correct_the_smoothing_bias():
+    system, variable = makeHarmonicSystem()
+    sampler = OPES(system, [variable], 300.0, 20.0, 50, None)
+    runSteps(sampler, system, 5000)
+    kde = sampler._kde["total.rw"]
+    corrected = sampler.getFreeEnergy(correctSmoothing=True, pilotFactor=1.5)
+    expected = -sampler._kbt * kde.getCorrectedLogPDF(1.5)
+    assert corrected.value_in_unit(unit.kilojoules_per_mole) == pytest.approx(
+        expected.value_in_unit(unit.kilojoules_per_mole)
+    )
+    assert sampler.getFreeEnergy().value_in_unit(
+        unit.kilojoules_per_mole
+    ) == pytest.approx(
+        (-sampler._kbt * kde.getLogPDF()).value_in_unit(unit.kilojoules_per_mole)
+    )
