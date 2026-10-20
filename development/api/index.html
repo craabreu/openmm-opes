@@ -1026,6 +1026,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#openmm_opes.kde.CVSpace.periodicCopies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        periodicCopies
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1744,6 +1755,17 @@
     <span class="md-ellipsis">
       
         mirrorPositions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openmm_opes.kde.CVSpace.periodicCopies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        periodicCopies
       
     </span>
   </a>
@@ -4194,6 +4216,30 @@ kernel's density over these images is equivalent to summing the
 query point's images against the one true kernel, which is what the
 tripled evaluation grid does. Used to keep :meth:<code>Kernel.evaluate</code>
 (arbitrary points) consistent with :meth:<code>Kernel.evaluateOnGrid</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="openmm_opes.kde.CVSpace.periodicCopies" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">periodicCopies</span>
+
+
+</h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">periodicCopies</span><span class="p">(</span><span class="n">values</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Make the last node along every periodic axis an exact copy of the first.</p>
+<p>The two nodes are the same point. Evaluating them separately can
+round differently (a matrix product, for one, need not give equal
+columns equal sums), and OpenMM rejects a periodic table whose ends
+differ at all.</p>
 
 
     </div>
