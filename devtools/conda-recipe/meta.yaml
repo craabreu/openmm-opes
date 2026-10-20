@@ -1,0 +1,52 @@
+# Conda recipe for the mdtools channel on anaconda.org. The Conda workflow
+# sets OPES_VERSION from pyproject.toml, after checking that it matches the
+# release tag.
+{% set version = environ['OPES_VERSION'] %}
+
+package:
+  name: openmm-opes
+  version: {{ version }}
+
+source:
+  git_url: ../../
+
+build:
+  noarch: python
+  number: 0
+  script: python -m pip install --no-deps --no-build-isolation --ignore-installed .
+
+requirements:
+  host:
+    - python >=3.11
+    - pip
+    - setuptools >=68
+  run:
+    - python >=3.11
+    - numpy >=1.24
+    - scipy >=1.10
+    - openmm >=8.1
+
+test:
+  source_files:
+    - tests
+  requires:
+    - pytest
+  imports:
+    - openmm_opes
+    - openmm_opes.kde
+  commands:
+    - python -c "from openmm_opes import OPES, CombinedOPES"
+    - pytest -q tests
+
+about:
+  home: https://github.com/craabreu/openmm-opes
+  summary: OpenMM implementation of On-the-fly Probability Enhanced Sampling (OPES)
+  license: MIT
+  license_family: MIT
+  license_file: LICENSE
+  doc_url: https://craabreu.github.io/openmm-opes/latest
+  dev_url: https://github.com/craabreu/openmm-opes
+
+extra:
+  recipe-maintainers:
+    - craabreu
