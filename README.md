@@ -31,13 +31,16 @@ Full documentation: <https://craabreu.github.io/openmm-opes>
   <img alt="OPES and metadynamics on alanine dipeptide" src="benchmarks/alanine/figures/convergence.png">
 </picture>
 
-On alanine dipeptide in vacuum, OPES converges the free energy difference
+For alanine dipeptide in vacuum, OPES converges the free energy difference
 between basins several times faster than OpenMM's well-tempered metadynamics,
-measured against an accurate reference surface over 16 runs of each. With the
-smoothing correction, `getFreeEnergy(correctSmoothing=True)`, its full surface
-is about as accurate as metadynamics'. Details, a single-run comparison and a
-reference surface for this system are in
-[benchmarks/alanine](benchmarks/alanine). A comparison with PLUMED's OPES is in
+based on 16 independent runs of each method evaluated against an accurate
+reference surface. With the smoothing correction
+(`getFreeEnergy(correctSmoothing=True)`), OPES also achieves comparable
+accuracy in the full free energy surface.
+
+The [alanine dipeptide benchmark](benchmarks/alanine) includes convergence
+results, single-run comparisons, and the reference surface. Additional
+benchmarks comparing this implementation with PLUMED's OPES are available in
 [benchmarks/plumed](benchmarks/plumed).
 
 ## Origin
