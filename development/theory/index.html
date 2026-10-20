@@ -466,6 +466,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#smoothing-correction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smoothing correction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#kernel-compression" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -648,6 +659,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#smoothing-correction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smoothing correction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#kernel-compression" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -781,6 +803,51 @@ samples so far plus one fictitious sample under the initial flat bias,
 averages over past ones, and PLUMED advises against reweighting with it: use
 it to check that the bias has converged. On alanine dipeptide, the
 current-bias estimate is the more accurate one after about 2 ns.</p>
+<h2 id="smoothing-correction">Smoothing correction</h2>
+<p>A kernel estimate is the true density convolved with the kernels, so to
+leading order it overshoots by <span class="arithmatex">\(\tfrac{1}{2}h^2\nabla^2 P\)</span>. In free energy
+terms, basin floors come out too high and steep walls too low. Silverman's rule
+narrows new kernels only slowly, and old kernels keep their width, so this
+bias fades slowly.</p>
+<p><code>getFreeEnergy(correctSmoothing=True)</code> removes it with the multiplicative
+correction of Jones, Linton and Nielsen (Biometrika 82, 327 (1995)). A pilot
+estimate <span class="arithmatex">\(\tilde P\)</span> uses the same kernels broadened by <code>pilotFactor</code>. Each
+kernel's weight is divided by <span class="arithmatex">\(\tilde P\)</span> at its center, so the reweighted
+samples follow the nearly flat ratio <span class="arithmatex">\(P/\tilde P\)</span>, which the broad kernels
+smooth at little cost in bias:</p>
+<div class="arithmatex">\[\hat P(\mathbf{s}) = \tilde P(\mathbf{s})\,
+\frac{\sum_k w_k\, \tilde G_k(\mathbf{s}) / \tilde P(\mathbf{s}_k)}{\sum_k w_k}\]</div>
+<p>The bias drops to order <span class="arithmatex">\(h^4\)</span>, while the broad kernels keep the noise of a
+single run low. The product does not conserve probability locally, which would
+shift free energy differences between basins, so the result is rescaled to
+carry, over a few pilot widths, the probability of the standard estimate.</p>
+<p>On alanine dipeptide, sixteen 50 ns runs gave these RMS errors against a
+reference surface, below 5 kcal/mol, in kcal/mol:</p>
+<table>
+<thead>
+<tr>
+<th>Estimate</th>
+<th>Single run</th>
+<th>Average of 16 runs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Standard</td>
+<td>0.099</td>
+<td>0.055</td>
+</tr>
+<tr>
+<td>Corrected, <code>pilotFactor=2</code></td>
+<td>0.059</td>
+<td>0.026</td>
+</tr>
+</tbody>
+</table>
+<p>Basin free energy differences were unchanged. The correction needs the
+broadened kernels to be narrow compared with the basins; early in a run, while
+kernels are still wide, it can make the surface worse. It changes only the
+reported free energy, not the bias.</p>
 <h2 id="kernel-compression">Kernel compression</h2>
 <p>Rather than storing a bias grid, kernels closer than <code>compressionThreshold</code> in
 Mahalanobis distance are merged, preserving total weight, mean and second

@@ -768,6 +768,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#openmm_opes.kde.OnlineKDE.getCorrectedLogPDF" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        getCorrectedLogPDF
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#openmm_opes.kde.OnlineKDE.getLogMeanDensity" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -906,6 +917,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#openmm_opes.kde.CVSpace.axisGridDistances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        axisGridDistances
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#openmm_opes.kde.CVSpace.axisImages" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -954,6 +976,17 @@
     <span class="md-ellipsis">
       
         foldedAxis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openmm_opes.kde.CVSpace.foldedAxisRows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        foldedAxisRows
       
     </span>
   </a>
@@ -1459,6 +1492,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#openmm_opes.kde.OnlineKDE.getCorrectedLogPDF" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        getCorrectedLogPDF
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#openmm_opes.kde.OnlineKDE.getLogMeanDensity" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1597,6 +1641,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#openmm_opes.kde.CVSpace.axisGridDistances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        axisGridDistances
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#openmm_opes.kde.CVSpace.axisImages" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1645,6 +1700,17 @@
     <span class="md-ellipsis">
       
         foldedAxis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#openmm_opes.kde.CVSpace.foldedAxisRows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        foldedAxisRows
       
     </span>
   </a>
@@ -2326,7 +2392,7 @@ available:</p>
 
 
 </h3>
-<div class="doc-signature highlight"><pre><span></span><code><span class="nf">getFreeEnergy</span><span class="p">()</span>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">getFreeEnergy</span><span class="p">(</span><span class="n">correctSmoothing</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">pilotFactor</span><span class="o">=</span><span class="mf">2.0</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
@@ -2342,6 +2408,61 @@ better than the direct one in explore mode.</p>
 samples there is no density to take a logarithm of. Unlike
 :meth:<code>getBias</code>, this has no defined limit to fall back on, and it
 never reaches the forces.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>correctSmoothing</code>
+            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Whether to remove the smoothing bias of the kernel estimate, which
+makes steep basin walls too low and basin floors too high. Uses
+:meth:<code>OnlineKDE.getCorrectedLogPDF</code>, a multiplicative correction
+that also lowers the noise of a single run, at the cost of a few
+evaluations of the kernels per call. Free energy differences
+between basins are unchanged. It helps once the kernels are
+narrow next to the basins, but early in a run, while they are
+still wide, it can make the surface worse.</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>pilotFactor</code>
+            </td>
+            <td>
+                  <code><span title="float">float</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Broadening of the pilot kernels in that correction. Values of 1.5
+to 3 work well; wider pilots leave more bias.</p>
+              </div>
+            </td>
+            <td>
+                  <code>2.0</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
 
 
     </div>
@@ -3140,14 +3261,15 @@ samples, with an initial sample under the flat bias
 
 
 </h3>
-<div class="doc-signature highlight"><pre><span></span><code><span class="nf">getFreeEnergy</span><span class="p">()</span>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">getFreeEnergy</span><span class="p">(</span><span class="n">correctSmoothing</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">pilotFactor</span><span class="o">=</span><span class="mf">2.0</span><span class="p">)</span>
 </code></pre></div>
 
     <div class="doc doc-contents ">
 
         <p>Free energy as a function of the collective variables.</p>
 <p>The estimate reweights every sample by the total bias, Eq. 14 of Ray and
-Rizzi. The grid follows :meth:<code>OPES.getFreeEnergy</code>.</p>
+Rizzi. The grid and the smoothing correction follow
+:meth:<code>OPES.getFreeEnergy</code>.</p>
 
 
     </div>
@@ -3465,6 +3587,52 @@ weights are small next to it barely shrink the bandwidth.</p>
     <div class="doc doc-contents ">
 
         <p>Log of the normalized density at a single point.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="openmm_opes.kde.OnlineKDE.getCorrectedLogPDF" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">getCorrectedLogPDF</span>
+
+
+</h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">getCorrectedLogPDF</span><span class="p">(</span><span class="n">pilotFactor</span><span class="o">=</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">iterations</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">matchingScale</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Log density on the grid with the smoothing bias removed.</p>
+<p>Kernel smoothing makes a density estimate too low on steep walls and
+too high at the bottom of basins, to order h^2 in the bandwidth. This
+applies the multiplicative bias correction of Jones, Linton and
+Nielsen (Biometrika 82, 327 (1995)), which cuts the bias to order h^4
+while keeping the estimate positive:</p>
+<ol>
+<li>A pilot estimate P~ uses the same kernels, broadened by
+   <code>pilotFactor</code>, which keeps its noise low.</li>
+<li>Each kernel's weight is divided by P~ at its center, so the
+   reweighted samples follow P / P~, which is nearly flat.</li>
+<li>Smoothing that ratio with the broad kernels costs little bias, and
+   P~ times the smoothed ratio estimates P.</li>
+</ol>
+<p><code>iterations</code> repeats steps 2 and 3 with the result as the pilot.
+The product does not conserve probability locally, which would shift
+free energy differences between basins. So the result is finally
+rescaled to carry, at the length scale of <code>matchingScale</code> pilot
+bandwidths, the same probability as the uncorrected estimate, which
+conserves it kernel by kernel.</p>
+<p>The correction needs the broadened kernels to stay narrow compared
+with the features of the density, say a third of a basin's width.
+Early in a run, when the kernels are still wide, it can do more harm
+than good.</p>
+<p>Only the reported density changes; the bias built from
+:meth:<code>getLogPDF</code> does not. Costs a few evaluations of the broadened
+kernels on the grid and at the kernel centers. NaN with no kernels.</p>
 
 
     </div>
@@ -3812,6 +3980,29 @@ internal grid is tripled with mirrored copies on each side, and
 <div class="doc doc-object doc-function">
 
 
+<h3 id="openmm_opes.kde.CVSpace.axisGridDistances" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">axisGridDistances</span>
+
+
+</h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">axisGridDistances</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="n">centers</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Distances from each of <code>centers</code> to every node of one axis.</p>
+<p>A 2-D array, one row per center, matching :meth:<code>gridDistances</code> for a
+single center: minimum-image on a periodic axis, whose last node
+repeats the first, and over the tripled grid on a reflective axis.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
 <h3 id="openmm_opes.kde.CVSpace.axisImages" class="doc doc-heading">
             <span class="doc doc-object-name doc-function-name">axisImages</span>
 
@@ -3911,6 +4102,26 @@ reflective walls are every combination of per-axis reflections, so
 folding each axis's one-dimensional profile before the outer product
 gives exactly what :meth:<code>foldedGrid</code> gives on the full tripled grid,
 at a fraction of the cost.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="openmm_opes.kde.CVSpace.foldedAxisRows" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">foldedAxisRows</span>
+
+
+</h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">foldedAxisRows</span><span class="p">(</span><span class="n">index</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>:meth:<code>foldedAxis</code> applied to every row of a 2-D array of log profiles.</p>
 
 
     </div>

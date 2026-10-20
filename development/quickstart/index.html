@@ -384,6 +384,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#correcting-the-smoothing-bias" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Correcting the smoothing bias
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#several-samplers-at-once" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -509,6 +520,17 @@
     <span class="md-ellipsis">
       
         OPES combined with OPES-explore
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#correcting-the-smoothing-bias" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Correcting the smoothing bias
       
     </span>
   </a>
@@ -657,6 +679,13 @@ samples also feel the other's bias. <code>getFreeEnergy()</code> therefore retur
 separate estimate that reweights every sample by the total bias.
 <code>getComponentBiases()</code> and <code>getComponentBiasEnergies(context)</code> give the two
 parts separately.</p>
+<h2 id="correcting-the-smoothing-bias">Correcting the smoothing bias</h2>
+<p>Kernel smoothing makes steep basin walls too low and basin floors too high. To
+remove that bias from the reported surface, ask for it explicitly:</p>
+<div class="highlight"><pre><span></span><code><span class="n">fes</span> <span class="o">=</span> <span class="n">sampler</span><span class="o">.</span><span class="n">getFreeEnergy</span><span class="p">(</span><span class="n">correctSmoothing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p>It also lowers the noise of a single run, but it needs kernels narrow compared
+with the basins, so use it on well-converged runs. See the theory page.</p>
 <h2 id="several-samplers-at-once">Several samplers at once</h2>
 <p>More generally, several samplers can bias the same simulation, each depositing
 kernels on its own schedule and weighting them by its own bias only, as several
