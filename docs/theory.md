@@ -23,10 +23,13 @@ grows, by Silverman's rule:
 
 $$\sigma_i^{(n)} = \sigma_i^{(0)}\left[N_{\text{eff}}^{(n)}(d+2)/4\right]^{-1/(d+4)}$$
 
-They never shrink below `minBandwidth`, which defaults to the grid spacing of
-each CV. The bias is tabulated on that grid, and a narrower kernel's forces
-are misrepresented by the interpolation, by up to 9% at one grid spacing and
-32% at 0.7. To resolve finer detail, increase `gridWidth`.
+There is no lower bound by default, as in PLUMED. The bias is tabulated on the
+CV grid and interpolated with splines, so kernels narrower than the grid
+spacing are not resolved in detail. This costs sampling efficiency, not
+correctness. The simulation feels exactly the tabulated bias, and kernels are
+weighted with that same bias, so the reweighted estimate stays unbiased. A
+floor would instead change the estimate itself, by keeping kernels wider than
+Silverman's rule prescribes. `minBandwidth` sets one if needed.
 
 ## Normalization
 
