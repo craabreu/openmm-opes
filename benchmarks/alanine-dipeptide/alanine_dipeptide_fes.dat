@@ -1,8 +1,8 @@
 # Reference free energy surface of alanine dipeptide in vacuum, F(phi, psi)
 # Ramachandran free energy landscape (potential of mean force) of the backbone
 # dihedrals phi and psi of alanine dipeptide (Ace-Ala-Nme), from openmm-opes,
-# benchmarks/alanine. Useful as ground truth for enhanced sampling benchmarks
-# (OPES, metadynamics, umbrella sampling, ABF, ...).
+# benchmarks/alanine-dipeptide. Useful as ground truth for enhanced sampling
+# benchmarks (OPES, metadynamics, umbrella sampling, ABF, ...).
 # 
 # System: Amber ff14SB (OpenMM amber14-all.xml), vacuum, no cutoff, bonds to
 # hydrogen constrained, hydrogen mass 4 amu, Langevin middle integrator at

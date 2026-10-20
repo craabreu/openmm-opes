@@ -27,8 +27,8 @@ Full documentation: <https://craabreu.github.io/openmm-opes>
 ## Benchmarks
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="benchmarks/alanine/figures/convergence-dark.png">
-  <img alt="OPES and metadynamics on alanine dipeptide" src="benchmarks/alanine/figures/convergence.png">
+  <source media="(prefers-color-scheme: dark)" srcset="benchmarks/alanine-dipeptide/figures/convergence-dark.png">
+  <img alt="OPES and metadynamics on alanine dipeptide" src="benchmarks/alanine-dipeptide/figures/convergence.png">
 </picture>
 
 For alanine dipeptide in vacuum, OPES converges the free energy difference
@@ -38,7 +38,7 @@ reference surface. With the smoothing correction
 (`getFreeEnergy(correctSmoothing=True)`), OPES also achieves comparable
 accuracy in the full free energy surface.
 
-The [alanine dipeptide benchmark](benchmarks/alanine) includes convergence
+The [alanine dipeptide benchmark](benchmarks/alanine-dipeptide) includes convergence
 results, single-run comparisons, and the reference surface. Additional
 benchmarks comparing this implementation with PLUMED's OPES are available in
 [benchmarks/plumed](benchmarks/plumed).
