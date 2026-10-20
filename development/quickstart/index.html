@@ -362,10 +362,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#other-biases-and-ct" class="md-nav__link">
+  <a href="#correcting-the-smoothing-bias" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Other biases and c(t)
+        Correcting the smoothing bias
       
     </span>
   </a>
@@ -384,10 +384,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#correcting-the-smoothing-bias" class="md-nav__link">
+  <a href="#multiple-walkers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Correcting the smoothing bias
+        Multiple walkers
       
     </span>
   </a>
@@ -399,6 +399,17 @@
     <span class="md-ellipsis">
       
         Several samplers at once
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-biases-and-ct" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other biases and c(t)
       
     </span>
   </a>
@@ -446,9 +457,20 @@
   
   
   
-    <li class="md-nav__item">
-      <a href="../api/" class="md-nav__link">
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
         
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -462,7 +484,191 @@
   
   
 
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/opes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OPES
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/combined-opes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CombinedOPES
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/online-kde/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OnlineKDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/cv-space/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CVSpace
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/kernel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -505,10 +711,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#other-biases-and-ct" class="md-nav__link">
+  <a href="#correcting-the-smoothing-bias" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Other biases and c(t)
+        Correcting the smoothing bias
       
     </span>
   </a>
@@ -527,10 +733,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#correcting-the-smoothing-bias" class="md-nav__link">
+  <a href="#multiple-walkers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Correcting the smoothing bias
+        Multiple walkers
       
     </span>
   </a>
@@ -542,6 +748,17 @@
     <span class="md-ellipsis">
       
         Several samplers at once
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-biases-and-ct" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other biases and c(t)
       
     </span>
   </a>
@@ -569,8 +786,8 @@
 
 
 <h1 id="quickstart">Quickstart</h1>
-<p>A single particle on a two-dimensional Müller-Brown potential, biased along
-<code>x</code> and <code>y</code>, recovering the free energy surface.</p>
+<p>This example biases a single particle on the two-dimensional Müller-Brown
+potential along <code>x</code> and <code>y</code>, and recovers its free energy surface.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">openmm</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mm</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">openmm</span><span class="w"> </span><span class="kn">import</span> <span class="n">app</span><span class="p">,</span> <span class="n">unit</span>
@@ -627,45 +844,36 @@
 <span class="n">fes</span> <span class="o">-=</span> <span class="n">fes</span><span class="o">.</span><span class="n">min</span><span class="p">()</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">sampler</span><span class="o">.</span><span class="n">getNumKernels</span><span class="p">()</span><span class="si">}</span><span class="s2"> kernels, barrier </span><span class="si">{</span><span class="n">fes</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> kJ/mol"</span><span class="p">)</span>
 </code></pre></div>
-<p><code>getFreeEnergy()</code> returns an array whose shape is the CV grid with the <strong>last</strong>
-variable varying fastest, so for two CVs it has shape <code>(ny, nx)</code> and can be
-handed straight to <code>matplotlib.pyplot.contourf</code>.</p>
+<p><code>getFreeEnergy()</code> returns an array on the CV grid in which the <strong>last</strong>
+variable varies fastest. For two CVs, its shape is <code>(ny, nx)</code>, so it can go
+straight to <code>matplotlib.pyplot.contourf</code>.</p>
 <h2 id="choosing-the-bandwidth">Choosing the bandwidth</h2>
-<p>Both papers prescribe measuring the initial bandwidth from a short unbiased
-run. You can let the sampler do that for you:</p>
+<p>Both OPES papers recommend measuring the initial bandwidth in a short unbiased
+run. The sampler can do that for you:</p>
 <div class="highlight"><pre><span></span><code><span class="n">sampler</span> <span class="o">=</span> <span class="n">OPES</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">varianceFrequency</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">warmupSteps</span><span class="o">=</span><span class="mi">50_000</span><span class="p">)</span>
 </code></pre></div>
-<p>Nothing is deposited during the first 50,000 steps; the CV variance measured
-there becomes the initial bandwidth and is then held fixed.</p>
-<p>To fix the bandwidth yourself instead, pass <code>varianceFrequency=None</code> and set
-each variable's <code>biasWidth</code>. It is read as <span class="arithmatex">\(\sigma^{(0)}\)</span>, the standard
-deviation of the <strong>unbiased</strong> distribution, in both modes. OPES-explore
+<p>No kernels are deposited during the first 50,000 steps. The CV variance
+measured over them sets the initial bandwidth, which is then held fixed.</p>
+<p>To set the bandwidth yourself, pass <code>varianceFrequency=None</code> and give each
+variable a <code>biasWidth</code>. It is read as <span class="arithmatex">\(\sigma^{(0)}\)</span>, the standard deviation of
+the <strong>unbiased</strong> distribution, for both OPES and OPES-explore. OPES-explore
 kernels estimate the sampled distribution, which is <span class="arithmatex">\(\sqrt{\gamma}\)</span> times
 wider, so they are deposited <span class="arithmatex">\(\sqrt{\gamma}\)</span> times wider than <code>biasWidth</code>.</p>
-<h2 id="other-biases-and-ct">Other biases and c(t)</h2>
-<p>When other biases act on the simulation, such as a restraint you want removed
-from the free energy or another sampler, pass them as <code>extraBias</code>, as with
-PLUMED's EXTRA_BIAS. Each sample is then weighted by all of them, so
-<code>getFreeEnergy()</code> removes them too. Items can be force groups, <code>Force</code> objects
-or other samplers:</p>
-<div class="highlight"><pre><span></span><code><span class="n">restraint</span><span class="o">.</span><span class="n">setForceGroup</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>  <span class="c1"># give it a group of its own</span>
-<span class="n">sampler</span> <span class="o">=</span> <span class="n">OPES</span><span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="n">variables</span><span class="p">,</span> <span class="n">temperature</span><span class="p">,</span> <span class="n">barrier</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span>
-               <span class="n">extraBias</span><span class="o">=</span><span class="p">[</span><span class="n">restraint</span><span class="p">])</span>
+<h2 id="correcting-the-smoothing-bias">Correcting the smoothing bias</h2>
+<p>Kernel smoothing makes steep basin walls too low and basin floors too high in
+the reported free energy. To remove that bias, ask for it:</p>
+<div class="highlight"><pre><span></span><code><span class="n">fes</span> <span class="o">=</span> <span class="n">sampler</span><span class="o">.</span><span class="n">getFreeEnergy</span><span class="p">(</span><span class="n">correctSmoothing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div>
-<p><code>getCt()</code> returns c(t), the constant that makes reweighting with a bias that
-still changes exact: a sample taken at time t gets weight
-exp(β[V_t(s) − c(t)]). The default estimate uses the current bias and density
-estimate. <code>getCt("running")</code> is PLUMED's <code>rct</code>. It lags behind the current
-bias, so treat it, as PLUMED does, as a convergence diagnostic that levels off
-once the bias converges, not as a reweighting constant.</p>
-<p><code>extraBias</code> also works in explore mode, where it changes only the reweighted
-free energy. PLUMED offers EXTRA_BIAS for OPES_METAD only.</p>
+<p>The correction also lowers the noise of a single run. It needs kernels that are
+narrow compared with the basins, so it can make things worse very early in a
+run, while the kernels are still wide. The bias itself is never changed. See
+the theory page for how it works.</p>
 <h2 id="opes-combined-with-opes-explore">OPES combined with OPES-explore</h2>
 <p><code>CombinedOPES</code> runs OPES and OPES-explore together on the same collective
-variables, the combined algorithm of Ray &amp; Rizzi, J. Chem. Theory Comput. 21,
-58 (2025), often called OPES_COM. The explore bias keeps pushing the system out
-of its minima, which helps when the CVs are suboptimal, while the OPES bias
-converges the free energy. It takes one barrier per component; the paper
+variables: the combined algorithm of Ray and Rizzi, J. Chem. Theory Comput.
+21, 58 (2025), often called OPES_COM. The explore bias keeps pushing the system
+out of its minima, which helps when the CVs are suboptimal, while the OPES bias
+converges the free energy. Each component has its own barrier, and the paper
 recommends an explore barrier below the OPES one.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">openmm_opes</span><span class="w"> </span><span class="kn">import</span> <span class="n">CombinedOPES</span>
 
@@ -674,23 +882,30 @@ recommends an explore barrier below the OPES one.</p>
 <span class="n">sampler</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">simulation</span><span class="p">,</span> <span class="mi">1_000_000</span><span class="p">)</span>
 <span class="n">fes</span> <span class="o">=</span> <span class="n">sampler</span><span class="o">.</span><span class="n">getFreeEnergy</span><span class="p">()</span>
 </code></pre></div>
-<p>Neither component alone estimates the unbiased distribution: each one's
-samples also feel the other's bias. <code>getFreeEnergy()</code> therefore returns a
-separate estimate that reweights every sample by the total bias.
+<p>Neither component estimates the unbiased distribution on its own, because
+each one's samples also feel the other's bias. <code>getFreeEnergy()</code> therefore
+returns a third estimate, which reweights every sample by the total bias.
 <code>getComponentBiases()</code> and <code>getComponentBiasEnergies(context)</code> give the two
 parts separately.</p>
-<h2 id="correcting-the-smoothing-bias">Correcting the smoothing bias</h2>
-<p>Kernel smoothing makes steep basin walls too low and basin floors too high. To
-remove that bias from the reported surface, ask for it explicitly:</p>
-<div class="highlight"><pre><span></span><code><span class="n">fes</span> <span class="o">=</span> <span class="n">sampler</span><span class="o">.</span><span class="n">getFreeEnergy</span><span class="p">(</span><span class="n">correctSmoothing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<h2 id="multiple-walkers">Multiple walkers</h2>
+<p>Several simulations can share one bias. Give each one its own sampler with the
+same settings, point them all at the same directory, and give each a stable
+walker id:</p>
+<div class="highlight"><pre><span></span><code><span class="n">sampler</span> <span class="o">=</span> <span class="n">OPES</span><span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="n">variables</span><span class="p">,</span> <span class="n">temperature</span><span class="p">,</span> <span class="n">barrier</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span>
+               <span class="n">saveFrequency</span><span class="o">=</span><span class="mi">5000</span><span class="p">,</span> <span class="n">biasDir</span><span class="o">=</span><span class="s2">"walkers"</span><span class="p">,</span> <span class="n">walkerId</span><span class="o">=</span><span class="n">rank</span><span class="p">)</span>
 </code></pre></div>
-<p>It also lowers the noise of a single run, but it needs kernels narrow compared
-with the basins, so use it on well-converged runs. See the theory page.</p>
+<p>Every <code>saveFrequency</code> steps, which must be a multiple of the deposition
+<code>frequency</code>, each walker writes its own kernels to the directory and reads in
+everyone else's. The walkers can run as separate processes, or on separate
+machines that share a file system. A stable <code>walkerId</code> lets a restarted walker
+take back its own file, instead of leaving the old one behind as a phantom
+extra walker. <code>CombinedOPES</code> takes the same options and keeps each
+component's files in a subdirectory of its own.</p>
 <h2 id="several-samplers-at-once">Several samplers at once</h2>
-<p>More generally, several samplers can bias the same simulation, each depositing
-kernels on its own schedule and weighting them by its own bias only, as several
-OPES actions do in a single PLUMED input. Create them all on the same <code>System</code>
-and advance the simulation with <code>OPES.stepTogether</code>. For example, an OPES
+<p>More generally, several samplers can bias the same simulation, as several OPES
+actions can in one PLUMED input. Each deposits kernels on its own schedule and
+weights them by its own bias only. Create them all on the same <code>System</code> and
+advance the simulation with <code>OPES.stepTogether</code>. For example, here is an OPES
 sampler on two CVs alongside an OPES-explore sampler on the first one:</p>
 <div class="highlight"><pre><span></span><code><span class="n">opes</span> <span class="o">=</span> <span class="n">OPES</span><span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="p">[</span><span class="n">cv1</span><span class="p">,</span> <span class="n">cv2</span><span class="p">],</span> <span class="n">temperature</span><span class="p">,</span> <span class="mi">55</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">50</span><span class="p">)</span>
 <span class="n">explore</span> <span class="o">=</span> <span class="n">OPES</span><span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="p">[</span><span class="n">cv1Copy</span><span class="p">],</span> <span class="n">temperature</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span> <span class="n">exploreMode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
@@ -698,10 +913,30 @@ sampler on two CVs alongside an OPES-explore sampler on the first one:</p>
 <span class="o">...</span>
 <span class="n">OPES</span><span class="o">.</span><span class="n">stepTogether</span><span class="p">(</span><span class="n">simulation</span><span class="p">,</span> <span class="p">[</span><span class="n">opes</span><span class="p">,</span> <span class="n">explore</span><span class="p">],</span> <span class="mi">1_000_000</span><span class="p">)</span>
 </code></pre></div>
-<p>Each variable's force is copied into its sampler's bias force, so pass every
-sampler its own <code>BiasVariable</code> objects. Each sampler's <code>getFreeEnergy()</code> is
-then biased by the others. To reweight, add up the biases, which
-<code>getBiasEnergy(simulation.context)</code> returns for each sampler.</p>
+<p>Each sampler's bias force takes ownership of its variables' forces, so give
+every sampler its own <code>BiasVariable</code> objects. Because each sampler weights
+kernels by its own bias only, its <code>getFreeEnergy()</code> is still biased by the
+others. To remove them, pass them as extra biases, described next, or
+reweight with the sum of the biases that <code>getBiasEnergy(simulation.context)</code>
+returns for each sampler.</p>
+<h2 id="other-biases-and-ct">Other biases and c(t)</h2>
+<p>When other biases act on the simulation, such as a restraint you want removed
+from the free energy or another sampler, pass them as <code>extraBias</code>, like
+PLUMED's EXTRA_BIAS. Each sample is then weighted by all of them, so
+<code>getFreeEnergy()</code> removes them too. Items can be force groups, <code>Force</code> objects
+or other samplers:</p>
+<div class="highlight"><pre><span></span><code><span class="n">restraint</span><span class="o">.</span><span class="n">setForceGroup</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>  <span class="c1"># give it a group of its own</span>
+<span class="n">sampler</span> <span class="o">=</span> <span class="n">OPES</span><span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="n">variables</span><span class="p">,</span> <span class="n">temperature</span><span class="p">,</span> <span class="n">barrier</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span>
+               <span class="n">extraBias</span><span class="o">=</span><span class="p">[</span><span class="n">restraint</span><span class="p">])</span>
+</code></pre></div>
+<p><code>extraBias</code> also works in explore mode, where it changes only the reweighted
+free energy. PLUMED offers EXTRA_BIAS for OPES_METAD only.</p>
+<p><code>getCt()</code> returns c(t), the constant that makes reweighting exact while the
+bias still changes: a sample taken at time t gets the weight
+exp(β[V_t(s) − c(t)]). The default estimate uses the current bias and the
+current density estimate. <code>getCt("running")</code> is PLUMED's <code>rct</code>. It lags behind
+the current bias, so treat it as PLUMED does: as a convergence diagnostic that
+levels off once the bias converges, not as a reweighting constant.</p>
 
 
 

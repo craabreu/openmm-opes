@@ -322,6 +322,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#installation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -433,9 +444,20 @@
   
   
   
-    <li class="md-nav__item">
-      <a href="api/" class="md-nav__link">
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
         
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -449,7 +471,191 @@
   
   
 
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="api/opes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OPES
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="api/combined-opes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CombinedOPES
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="api/online-kde/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OnlineKDE
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="api/cv-space/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CVSpace
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="api/kernel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -479,6 +685,17 @@
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#installation" class="md-nav__link">
@@ -545,46 +762,78 @@
 
 
 <h1 id="openmm-opes">openmm-opes</h1>
-<p>An <a href="https://openmm.org">OpenMM</a> implementation of <strong>On-the-fly Probability
-Enhanced Sampling</strong> (OPES) and its exploratory variant, OPES-explore.</p>
-<p>OPES builds a bias potential from an on-the-fly estimate of the probability
-distribution along a set of collective variables, rather than accumulating
-repulsive hills the way metadynamics does. It needs only three parameters:
-the deposition pace, the initial kernel bandwidth, and the approximate height
-of the barrier to overcome.</p>
+<p>On-the-fly Probability Enhanced Sampling (OPES) for <a href="https://openmm.org">OpenMM</a>.</p>
+<p>OPES is an enhanced sampling method that builds its bias from an on-the-fly
+estimate of the probability distribution along a few collective variables,
+instead of accumulating repulsive hills as metadynamics does. The bias soon
+becomes nearly static, so free energies converge quickly and reweighting is
+simple. It needs only an expected barrier height, a deposition stride and a
+kernel bandwidth. This package implements OPES in pure Python on top of
+OpenMM, in the spirit of <code>openmm.app.Metadynamics</code>, and is validated against
+PLUMED's <code>OPES_METAD</code> and <code>OPES_METAD_EXPLORE</code>.</p>
+<h2 id="features">Features</h2>
+<ul>
+<li><strong>OPES and OPES-explore,</strong> with fixed, adaptive or warm-up bandwidths and
+  on-the-fly kernel compression.</li>
+<li><strong>OPES and OPES-explore combined</strong> (OPES_COM), as a single <code>CombinedOPES</code>
+  sampler.</li>
+<li><strong>Multiple walkers</strong> sharing one bias through a directory.</li>
+<li><strong>Several samplers on one simulation,</strong> with extra biases folded into the
+  reweighting.</li>
+<li><strong>Reweighting tools:</strong> the reweighting constant c(t), and PLUMED's <code>rct</code> as a
+  convergence check.</li>
+<li><strong>Smoothing-corrected free energy surfaces.</strong></li>
+<li><strong>Periodic, unbounded or reflective collective variables,</strong> one to three of
+  them.</li>
+<li><strong>Checkpoints</strong> through <code>getState</code> and <code>setState</code>.</li>
+</ul>
 <h2 id="installation">Installation</h2>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>openmm-opes
 </code></pre></div>
-<p>OpenMM itself is also distributed through conda-forge, if you prefer conda
-environments:</p>
-<div class="highlight"><pre><span></span><code>mamba<span class="w"> </span>install<span class="w"> </span>-c<span class="w"> </span>conda-forge<span class="w"> </span>openmm
+<p>It needs Python 3.11 or later and OpenMM 8.1 or later. OpenMM can also come
+from conda-forge:</p>
+<div class="highlight"><pre><span></span><code>conda<span class="w"> </span>install<span class="w"> </span>-c<span class="w"> </span>conda-forge<span class="w"> </span>openmm
 pip<span class="w"> </span>install<span class="w"> </span>openmm-opes
 </code></pre></div>
 <h2 id="at-a-glance">At a glance</h2>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">openmm</span><span class="w"> </span><span class="kn">import</span> <span class="n">app</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">openmm</span><span class="w"> </span><span class="kn">import</span> <span class="n">unit</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">openmm_opes</span><span class="w"> </span><span class="kn">import</span> <span class="n">OPES</span>
 
 <span class="n">sampler</span> <span class="o">=</span> <span class="n">OPES</span><span class="p">(</span>
-    <span class="n">system</span><span class="p">,</span> <span class="p">[</span><span class="n">phi</span><span class="p">,</span> <span class="n">psi</span><span class="p">],</span> <span class="mi">300</span> <span class="o">*</span> <span class="n">unit</span><span class="o">.</span><span class="n">kelvin</span><span class="p">,</span> <span class="mi">40</span> <span class="o">*</span> <span class="n">unit</span><span class="o">.</span><span class="n">kilojoules_per_mole</span><span class="p">,</span>
-    <span class="n">frequency</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">varianceFrequency</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
+    <span class="n">system</span><span class="p">,</span>
+    <span class="p">[</span><span class="n">phi</span><span class="p">,</span> <span class="n">psi</span><span class="p">],</span>  <span class="c1"># openmm.app.BiasVariable objects</span>
+    <span class="n">temperature</span><span class="o">=</span><span class="mi">300</span> <span class="o">*</span> <span class="n">unit</span><span class="o">.</span><span class="n">kelvin</span><span class="p">,</span>
+    <span class="n">barrier</span><span class="o">=</span><span class="mi">40</span> <span class="o">*</span> <span class="n">unit</span><span class="o">.</span><span class="n">kilojoules_per_mole</span><span class="p">,</span>
+    <span class="n">frequency</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span>
+    <span class="n">varianceFrequency</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>
 <span class="p">)</span>
 <span class="n">sampler</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">simulation</span><span class="p">,</span> <span class="mi">1_000_000</span><span class="p">)</span>
-<span class="n">fes</span> <span class="o">=</span> <span class="n">sampler</span><span class="o">.</span><span class="n">getFreeEnergy</span><span class="p">()</span>
+<span class="n">fes</span> <span class="o">=</span> <span class="n">sampler</span><span class="o">.</span><span class="n">getFreeEnergy</span><span class="p">(</span><span class="n">correctSmoothing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </code></pre></div>
-<p>See the <a href="quickstart/">quickstart</a> for a complete runnable example, and the
-<a href="theory/">theory</a> page for how the code maps onto the published equations.</p>
+<p>The <a href="quickstart/">quickstart</a> has a complete runnable example and the main
+options. The <a href="theory/">theory</a> page shows how the code maps onto the
+published equations and where it departs from them. The
+<a href="https://github.com/craabreu/openmm-opes/tree/main/benchmarks">benchmarks</a>
+compare openmm-opes with PLUMED's OPES and with OpenMM's metadynamics, against
+a reference surface for alanine dipeptide.</p>
 <h2 id="origin">Origin</h2>
 <p>This library packages and hardens the prototype implementation developed in
 <a href="https://github.com/craabreu/opes-simulations">craabreu/opes-simulations</a>,
-porting its <code>OPES</code>/<code>OnlineKDE</code> classes into a tested, documented package.</p>
+porting its <code>OPES</code> and <code>OnlineKDE</code> classes into a tested, documented package.</p>
 <h2 id="references">References</h2>
 <ol>
-<li>Invernizzi &amp; Parrinello, <em>Rethinking Metadynamics: From Bias Potentials to
-   Probability Distributions</em>, J. Phys. Chem. Lett. 2020.
-   <a href="https://doi.org/10.1021/acs.jpclett.0c00497">doi:10.1021/acs.jpclett.0c00497</a></li>
-<li>Invernizzi &amp; Parrinello, <em>Exploration vs Convergence Speed in Adaptive-Bias
-   Enhanced Sampling</em>, J. Chem. Theory Comput. 2022.
+<li>M. Invernizzi and M. Parrinello, <em>Rethinking Metadynamics: From Bias
+   Potentials to Probability Distributions</em>, J. Phys. Chem. Lett. 11, 2731
+   (2020). <a href="https://doi.org/10.1021/acs.jpclett.0c00497">doi:10.1021/acs.jpclett.0c00497</a></li>
+<li>M. Invernizzi and M. Parrinello, <em>Exploration vs Convergence Speed in
+   Adaptive-Bias Enhanced Sampling</em>, J. Chem. Theory Comput. 18, 3988 (2022).
    <a href="https://doi.org/10.1021/acs.jctc.2c00152">doi:10.1021/acs.jctc.2c00152</a></li>
+<li>D. Ray and V. Rizzi, <em>Enhanced Sampling with Suboptimal Collective
+   Variables: Reconciling Accuracy and Convergence Speed</em>, J. Chem. Theory
+   Comput. 21, 58 (2025).
+   <a href="https://doi.org/10.1021/acs.jctc.4c01231">doi:10.1021/acs.jctc.4c01231</a></li>
+<li>M. C. Jones, O. Linton and J. P. Nielsen, <em>A Simple Bias Reduction Method
+   for Density Estimation</em>, Biometrika 82, 327 (1995).</li>
 </ol>
 
 
