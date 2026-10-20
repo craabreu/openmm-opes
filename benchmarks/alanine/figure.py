@@ -7,7 +7,9 @@ RUNS_DIR holds the run.py outputs, opes_SEED.npz and metad_SEED.npz, and
 TRUTH.npz the reference surface from reference.py. Draws the reference
 surface and, against it and over time, the basin free energy error, the
 surface error of single runs, and the surface error of the average of all
-runs. OUTFILE gets .png and .svg versions.
+runs. Surface errors are RMS deviations where the reference is below
+5 kcal/mol, after removing the mean offset. OUTFILE gets .png and .svg
+versions.
 """
 
 import argparse
@@ -90,22 +92,18 @@ def main():
         )
     axs[0, 1].set(
         ylabel=r"$|\Delta F - \Delta F_\mathrm{ref}|$ (kcal mol$^{-1}$)",
-        title=r"Basin $\Delta F$ ($\phi>0$ vs $\phi<0$)",
+        title=r"Basin $\Delta F$, $\phi>0$ vs $\phi<0$",
     )
-    axs[1, 0].set(
-        ylabel=r"RMSD (kcal mol$^{-1}$)",
-        title=r"Single-run surface, $F_\mathrm{ref} < 5$ kcal mol$^{-1}$",
-    )
-    axs[1, 1].set(
-        ylabel=r"RMSD (kcal mol$^{-1}$)",
-        title=r"Surface averaged over runs, $F_\mathrm{ref} < 5$ kcal mol$^{-1}$",
-    )
+    axs[1, 0].set(ylabel=r"RMSD (kcal mol$^{-1}$)", title="Surface of a single run")
+    axs[1, 1].set(ylabel=r"RMSD (kcal mol$^{-1}$)", title="Surface averaged over runs")
     for ax in (axs[0, 1], axs[1, 0], axs[1, 1]):
         ax.set(xlabel="Simulation time (ns)", xlim=(0, None))
         ax.set_ylim(bottom=0)
     axs[0, 1].legend(fontsize="small")
     for ax, label in zip(axs.ravel(), "abcd", strict=True):
-        ax.set_title(label, loc="left", fontweight="bold")
+        ax.text(
+            -0.16, 1.04, label, transform=ax.transAxes, fontweight="bold", fontsize=10
+        )
     for suffix in (".png", ".svg"):
         fig.savefig(args.outfile.with_suffix(suffix), dpi=200)
 
