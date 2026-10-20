@@ -17,11 +17,12 @@ With --plumed-merge, openmm-opes merges kernels with PLUMED's rule (see
 plumed_merge.py) instead of its own, which isolates the merge rule as the
 remaining difference between the two codes.
 
-For each case, prints the kernel counts, the range of each final bias on a
-grid over the sampled region, the RMS and maximum difference between the two
-biases on that grid after shifting each to zero at its maximum, and the mean
-and RMS difference between the biases felt along the second half of the
-trajectory.
+For each case and each bias acting in it (OPES and OPES-explore in the
+combined cases), prints the kernel counts, the range of each final bias on a
+grid over the sampled region, and the RMS and maximum difference between the
+two codes' biases on that grid after shifting each to zero at its maximum. It
+then prints the mean and RMS difference between the total biases felt along
+the second half of the trajectory.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ import openmm
 from common import KB
 from openmm import app, unit
 
-from openmm_opes import OPES
+from openmm_opes import OPES, CombinedOPES
 
 
 @dataclass
@@ -45,12 +46,15 @@ class Case:
     """One comparison: dimensionality, OPES variant and sampler settings.
 
     ``bandwidth`` fixes the initial kernel bandwidth in both codes; when None,
-    both estimate it adaptively.
+    both estimate it adaptively. With an ``exploreBarrier``, OPES and
+    OPES-explore act together (OPES_COM): two actions in PLUMED and a
+    CombinedOPES in openmm-opes, and ``explore`` is ignored.
     """
 
     dims: int
     explore: bool
     barrier: float = 30.0
+    exploreBarrier: float | None = None
     pace: int = 10
     samples: int = 30_000
     temperature: float = 300.0
@@ -66,7 +70,23 @@ CASES = {
     "2d-explore": Case(dims=2, explore=True),
     "1d-opes-fixed": Case(dims=1, explore=False, bandwidth=0.05),
     "1d-explore-fixed": Case(dims=1, explore=True, bandwidth=0.05),
+    "1d-combined": Case(dims=1, explore=False, exploreBarrier=15.0),
+    "2d-combined": Case(dims=2, explore=False, exploreBarrier=15.0),
+    "1d-combined-fixed": Case(
+        dims=1, explore=False, exploreBarrier=15.0, bandwidth=0.05
+    ),
 }
+
+
+def plumed_actions(case: Case) -> list[tuple[str, str, float]]:
+    """Label, PLUMED action and barrier of each bias acting in a case."""
+    if case.exploreBarrier is not None:
+        return [
+            ("o", "OPES_METAD", case.barrier),
+            ("e", "OPES_METAD_EXPLORE", case.exploreBarrier),
+        ]
+    action = "OPES_METAD_EXPLORE" if case.explore else "OPES_METAD"
+    return [("o", action, case.barrier)]
 
 
 def trajectory(case: Case) -> np.ndarray:
@@ -108,11 +128,19 @@ def plumed_bias(plumed, workdir: Path, case: Case, traj, grid):
     final number of compressed kernels.
     """
     names = ["x", "y"][: case.dims]
-    action = "OPES_METAD_EXPLORE" if case.explore else "OPES_METAD"
+    actions = plumed_actions(case)
     sigma = "" if case.bandwidth is None else f" SIGMA={case.bandwidth}"
-    common = (
-        f"ARG={','.join(names)} TEMP={case.temperature} BARRIER={case.barrier}{sigma}"
-    )
+
+    def bias_actions(pace, state):
+        return "".join(
+            f"{label}: {action} ARG={','.join(names)} TEMP={case.temperature}"
+            f" BARRIER={barrier}{sigma} PACE={pace} {state.format(label=label)}\n"
+            for label, action, barrier in actions
+        )
+
+    labels = [label for label, _, _ in actions]
+    total = "b: COMBINE ARG=" + ",".join(f"{la}.bias" for la in labels)
+    total += " PERIODIC=NO\n"
 
     def write_series(path, values):
         with open(path, "w") as file:
@@ -132,9 +160,14 @@ def plumed_bias(plumed, workdir: Path, case: Case, traj, grid):
     # and the driver's last step is samples - 1.
     (workdir / "deposit.dat").write_text(
         read_actions("traj.dat")
-        + f"o: {action} {common} PACE={case.pace}"
-        + f" STATE_WFILE=state STATE_WSTRIDE={case.samples - 1}\n"
-        + "PRINT ARG=o.bias,o.nker FILE=colvar FMT=%.10g\n"
+        + bias_actions(
+            case.pace,
+            f"STATE_WFILE=state_{{label}} STATE_WSTRIDE={case.samples - 1}",
+        )
+        + total
+        + "PRINT ARG=b,"
+        + ",".join(f"{la}.nker" for la in labels)
+        + " FILE=colvar FMT=%.10g\n"
     )
     subprocess.run([*run, "deposit.dat"], cwd=workdir, check=True, capture_output=True)
     deposit = np.loadtxt(workdir / "colvar", comments="#")
@@ -145,12 +178,15 @@ def plumed_bias(plumed, workdir: Path, case: Case, traj, grid):
     (workdir / "evaluate.dat").write_text(
         "RESTART\n"
         + read_actions("grid.dat")
-        + f"o: {action} {common} PACE={10 * len(grid)} STATE_RFILE=state\n"
-        + "PRINT ARG=o.bias FILE=gridbias FMT=%.10g\n"
+        + bias_actions(10 * len(grid), "STATE_RFILE=state_{label}")
+        + "PRINT ARG="
+        + ",".join(f"{la}.bias" for la in labels)
+        + " FILE=gridbias FMT=%.10g\n"
     )
     subprocess.run([*run, "evaluate.dat"], cwd=workdir, check=True, capture_output=True)
-    on_grid = np.loadtxt(workdir / "gridbias", comments="#")[:, 1]
-    return deposit[:, 1], on_grid, int(deposit[-1, 2])
+    components = np.loadtxt(workdir / "gridbias", comments="#", ndmin=2)[:, 1:]
+    kernels = tuple(int(n) for n in deposit[-1, 2:])
+    return deposit[:, 1], components, kernels
 
 
 class TrajectoryReplay:
@@ -196,8 +232,8 @@ class TrajectoryReplay:
 def openmm_opes_bias(case: Case, traj, grid):
     """Replay the trajectory through openmm-opes.
 
-    Returns the bias felt at each sample, the final bias on the grid, and the
-    final number of compressed kernels.
+    Returns the bias felt at each sample, the final bias of each component on
+    the grid, and the final numbers of compressed kernels.
     """
     system = openmm.System()
     system.addParticle(1.0)
@@ -207,16 +243,30 @@ def openmm_opes_bias(case: Case, traj, grid):
         force.addParticle(0, [])
         width = case.bandwidth or (high - low) / 100
         variables.append(app.BiasVariable(force, low, high, width, False, size))
-    sampler = OPES(
-        system,
-        variables,
-        case.temperature * unit.kelvin,
-        case.barrier * unit.kilojoules_per_mole,
-        case.pace,
-        # PLUMED updates the adaptive variance at every step
-        None if case.bandwidth else 1,
-        exploreMode=case.explore,
-    )
+    # PLUMED updates the adaptive variance at every step
+    varianceFrequency = None if case.bandwidth else 1
+    temperature = case.temperature * unit.kelvin
+    barrier = case.barrier * unit.kilojoules_per_mole
+    if case.exploreBarrier is None:
+        sampler = OPES(
+            system,
+            variables,
+            temperature,
+            barrier,
+            case.pace,
+            varianceFrequency,
+            exploreMode=case.explore,
+        )
+    else:
+        sampler = CombinedOPES(
+            system,
+            variables,
+            temperature,
+            barrier,
+            case.exploreBarrier * unit.kilojoules_per_mole,
+            case.pace,
+            varianceFrequency,
+        )
     replay = TrajectoryReplay(system, traj, [sampler])
     OPES.stepTogether(replay, [sampler], len(traj) - 1)
     on_grid = []
@@ -224,8 +274,17 @@ def openmm_opes_bias(case: Case, traj, grid):
         xyz = np.zeros(3)
         xyz[: case.dims] = point
         replay.context.setPositions([openmm.Vec3(*xyz)])
-        on_grid.append(replay.bias())
-    return replay.biases, np.array(on_grid), sampler.getNumKernels()
+        if isinstance(sampler, CombinedOPES):
+            energies = sampler.getComponentBiasEnergies(replay.context)
+            on_grid.append(
+                [e.value_in_unit(unit.kilojoules_per_mole) for e in energies]
+            )
+        else:
+            on_grid.append([replay.bias()])
+    kernels = sampler.getNumKernels()
+    if isinstance(kernels, int):
+        kernels = (kernels,)
+    return replay.biases, np.array(on_grid), kernels
 
 
 def main():
@@ -258,15 +317,21 @@ def main():
             plumed_grid=p_grid,
             openmm_opes_grid=o_grid,
         )
-        shape = (o_grid - o_grid.max()) - (p_grid - p_grid.max())
         late = slice(len(traj) // 2, None)
         along = o_along[late] - p_along[late]
+        for k, (_, action, _) in enumerate(plumed_actions(case)):
+            p, o = p_grid[:, k], o_grid[:, k]
+            shape = (o - o.max()) - (p - p.max())
+            print(
+                f"{name:17s} {action:18s} kernels {p_kernels[k]:4d} (PLUMED)"
+                f" {o_kernels[k]:4d} (openmm-opes)"
+                f" | bias range {np.ptp(p):6.2f} / {np.ptp(o):6.2f}"
+                f" | grid diff rms {np.sqrt(np.mean(shape**2)):5.2f}"
+                f" max {np.abs(shape).max():5.2f} kJ/mol",
+                flush=True,
+            )
         print(
-            f"{name:16s} kernels {p_kernels:4d} (PLUMED) {o_kernels:4d} (openmm-opes)"
-            f" | bias range {np.ptp(p_grid):6.2f} / {np.ptp(o_grid):6.2f}"
-            f" | grid diff rms {np.sqrt(np.mean(shape**2)):5.2f}"
-            f" max {np.abs(shape).max():5.2f}"
-            f" | along diff mean {along.mean():+6.2f}"
+            f"{name:17s} {'total bias felt':18s} along diff mean {along.mean():+6.2f}"
             f" rms {np.sqrt(np.mean((along - along.mean()) ** 2)):5.2f} kJ/mol",
             flush=True,
         )
