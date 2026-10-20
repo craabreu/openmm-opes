@@ -111,6 +111,23 @@ class CVSpace:
             distances[:, -1] = distances[:, 0]
         return distances
 
+    def periodicCopies(self, values):
+        """Make the last node along every periodic axis an exact copy of the first.
+
+        The two nodes are the same point. Evaluating them separately can
+        round differently (a matrix product, for one, need not give equal
+        columns equal sums), and OpenMM rejects a periodic table whose ends
+        differ at all.
+        """
+        for i, cv in enumerate(self.variables):
+            if cv.periodic:
+                axis = self.numDimensions - 1 - i
+                first = np.take(values, [0], axis=axis)
+                index = [slice(None)] * values.ndim
+                index[axis] = slice(-1, None)
+                values[tuple(index)] = first
+        return values
+
     def foldedAxisRows(self, index, values):
         """:meth:`foldedAxis` applied to every row of a 2-D array of log profiles."""
         if self.bounded and not self.variables[index].periodic:
@@ -599,7 +616,7 @@ class OnlineKDE:
             result[underflow] = self._logMixtureAtNodes(
                 np.argwhere(underflow), logProfiles, logHeights
             )
-        return result
+        return space.periodicCopies(result)
 
     @staticmethod
     def _logMixtureAtNodes(nodes, logProfiles, logHeights):
@@ -788,7 +805,9 @@ class OnlineKDE:
         corrected = logGrid - self._logSumW
         weights = np.exp(logWeights - logWeights.max())
         scales = matchingScale * (weights @ bandwidths) / weights.sum()
-        return corrected + self._massRatio(standard, corrected, scales)
+        return self._cvSpace.periodicCopies(
+            corrected + self._massRatio(standard, corrected, scales)
+        )
 
     def _logWeights(self):
         return np.array([k.logWeight for k in self._kernels], dtype=float)
