@@ -155,7 +155,7 @@ of the documentation.
 ## Reproducing
 
 ```bash
-# Benchmark runs: 16 seeds per method, about 10 minutes each on one CPU core
+# Benchmark runs: 16 seeds per method, under 10 minutes each on one CPU core
 python run.py opes SEED runs/opes_SEED.npz
 python run.py metad SEED runs/metad_SEED.npz
 
@@ -174,7 +174,10 @@ python surfaces.py runs reference.npz 1 figures/surfaces
 ```
 
 Runs use OpenMM's Reference platform, one process per seed, so they
-parallelize trivially. The results above come from openmm-opes at 35be0b0.
+parallelize trivially. A 50 ns run took about 8.5 minutes with OPES, including
+the corrected surface every nanosecond, and about 6 minutes with
+metadynamics. The 48 runs of 200 ns behind the reference surface are the
+expensive part. The results above come from openmm-opes at 35be0b0.
 
 ## Files
 
@@ -183,7 +186,7 @@ parallelize trivially. The results above come from openmm-opes at 35be0b0.
 | `run.py` | One OPES or metadynamics run, saving its surface every nanosecond |
 | `reference.py` | Runs under a fixed bias, the reference surface, its table and its figure |
 | `analyze.py` | Convergence metrics, printed as tables |
-| `figure.py`, `deltaf.py`, `surfaces.py` | The three figures |
+| `figure.py`, `deltaf.py`, `surfaces.py` | The convergence, single-run ΔF and single-run surface figures |
 | `alanine_dipeptide_fes.dat` | The reference free energy surface |
 | `alanine-dipeptide.pdb` | The starting structure, from OpenMM's test systems |
 | `figures/` | The figures above |
