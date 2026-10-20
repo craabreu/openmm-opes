@@ -118,18 +118,32 @@ Single metadynamics runs wander much longer before settling.
 
 ![Single-run surfaces before and after the smoothing correction](figures/surfaces.png)
 
-Seed 1 at 50 ns. **a–c**, The surfaces reported by OPES, by OPES with the
-smoothing correction, and by metadynamics. **d–f**, Their differences from the
-reference, where it is below 11 kcal/mol, which includes the transition
-region between the basins. The color scale stops at ±0.4 kcal/mol, so the
-largest raw OPES errors near the transition region are clipped. Panel titles
-give the RMSD where the reference is below 5 kcal/mol.
+Seed 1 at 50 ns: the surfaces reported by OPES (**a**), by OPES with the
+smoothing correction (**b**), and by metadynamics (**c**). The raw OPES
+contours are jagged; the corrected ones are as smooth as metadynamics'.
 
-Raw OPES shows grainy noise and a systematic pattern: steep walls too low
-(blue) and basin floors too high (red). The correction removes the pattern
-and much of the noise. On the barrier, from 8 to 11 kcal/mol, it halves the
-RMS error of the 16 runs, from 0.21 to 0.11 kcal/mol. Metadynamics, at
-0.08 kcal/mol there, shows broad, smooth deviations instead.
+### Errors, single run and pooled
+
+![Errors of single and pooled surfaces against the reference](figures/differences.png)
+
+Differences from the reference at 50 ns, for seed 1 (**a–c**) and for the
+pool of all 16 runs, whose probabilities are averaged (**d–f**). Pooling
+averages out most of the noise and leaves the systematic error. Differences
+are shown where the reference is below 11 kcal/mol, which includes the
+transition region between the basins. The color scale stops at
+±0.4 kcal/mol, so the largest raw OPES errors near the transition region are
+clipped. Titles give the RMSD where the reference is below 5 kcal/mol.
+
+- **Raw OPES** has grainy noise in a single run (a) and, once pooled (d), a
+  clear systematic pattern: steep walls too low (blue) and basin floors too
+  high (red).
+- **The correction** removes that pattern, leaving a pooled error near
+  zero almost everywhere (e). In a single run (b) it also removes much of the
+  noise. On the barrier, from 8 to 11 kcal/mol, it halves the RMS error of
+  the 16 runs, from 0.21 to 0.11 kcal/mol.
+- **Metadynamics** shows broad, smooth deviations in a single run (c), at
+  0.08 kcal/mol RMS on the barrier. Pooled (f), it keeps a faint systematic
+  pattern of its own along the walls.
 
 ### Why OPES's surface trails, and what the correction does
 
@@ -170,7 +184,8 @@ python reference.py plot reference.npz figures/reference
 python analyze.py runs --truth reference.npz
 python figure.py runs reference.npz figures/convergence
 python deltaf.py runs reference.npz 1 figures/deltaf
-python surfaces.py runs reference.npz 1 figures/surfaces
+python surfaces.py runs 1 figures/surfaces
+python differences.py runs reference.npz 1 figures/differences
 ```
 
 Runs use OpenMM's Reference platform, one process per seed, so they
@@ -186,7 +201,8 @@ expensive part. The results above come from openmm-opes at 35be0b0.
 | `run.py` | One OPES or metadynamics run, saving its surface every nanosecond |
 | `reference.py` | Runs under a fixed bias, the reference surface, its table and its figure |
 | `analyze.py` | Convergence metrics, printed as tables |
-| `figure.py`, `deltaf.py`, `surfaces.py` | The convergence, single-run ΔF and single-run surface figures |
+| `figure.py`, `deltaf.py` | The convergence and single-run ΔF figures |
+| `surfaces.py`, `differences.py` | The single-run surfaces and their errors, single and pooled |
 | `alanine_dipeptide_fes.dat` | The reference free energy surface |
 | `alanine-dipeptide.pdb` | The starting structure, from OpenMM's test systems |
 | `figures/` | The figures above |
