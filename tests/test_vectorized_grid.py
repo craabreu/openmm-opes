@@ -74,3 +74,18 @@ def test_rebuilt_caches_match_the_incremental_ones():
     incremental = kde._logPG.copy()
     kde._rebuildCaches()
     assert kde._logPG == pytest.approx(incremental, rel=1e-8, abs=1e-8)
+
+
+def test_periodic_grid_ends_are_exactly_equal_after_a_rebuild():
+    """OpenMM rejects a periodic table whose first and last values differ."""
+    space = makeSpace((-np.pi, np.pi, 101, True), (-np.pi, np.pi, 101, True))
+    kde = OnlineKDE(space)
+    rng = np.random.default_rng(7)
+    for _ in range(2000):
+        kde.update(rng.uniform(-np.pi, np.pi, 2), rng.normal(), np.full(2, 0.04**2))
+    kde._rebuildCaches()
+    assert np.array_equal(kde._logPG[-1, :], kde._logPG[0, :])
+    assert np.array_equal(kde._logPG[:, -1], kde._logPG[:, 0])
+    corrected = kde.getCorrectedLogPDF()
+    assert np.array_equal(corrected[-1, :], corrected[0, :])
+    assert np.array_equal(corrected[:, -1], corrected[:, 0])
