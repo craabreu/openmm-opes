@@ -24,6 +24,19 @@ fes = sampler.getFreeEnergy()
 
 Full documentation: <https://craabreu.github.io/openmm-opes>
 
+## Benchmarks
+
+![OPES and metadynamics on alanine dipeptide](benchmarks/alanine/figures/convergence.png)
+
+On alanine dipeptide in vacuum, OPES converges the free energy difference
+between basins several times faster than OpenMM's well-tempered metadynamics,
+measured against an accurate reference surface over 16 runs of each. With the
+smoothing correction, `getFreeEnergy(correctSmoothing=True)`, its full surface
+is about as accurate as metadynamics'. Details, a single-run comparison and a
+reference surface for this system are in
+[benchmarks/alanine](benchmarks/alanine). A comparison with PLUMED's OPES is in
+[benchmarks/plumed](benchmarks/plumed).
+
 ## Origin
 
 This library packages and hardens the prototype implementation developed in
