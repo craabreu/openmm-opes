@@ -185,6 +185,8 @@ python reference.py plot reference.npz figures/reference
 python analyze.py runs --truth reference.npz
 python figure.py runs reference.npz figures/convergence
 python figure.py runs reference.npz figures/convergence-dark --dark
+python overview.py runs reference.npz 1 10 figures/overview
+python overview.py runs reference.npz 1 10 figures/overview-dark --dark
 python deltaf.py runs reference.npz 1 figures/deltaf
 python surfaces.py runs 1 figures/surfaces
 python differences.py runs reference.npz 1 figures/differences
@@ -204,6 +206,7 @@ expensive part. The results above come from openmm-opes at 35be0b0.
 | `reference.py` | Runs under a fixed bias, the reference surface, its table and its figure |
 | `analyze.py` | Convergence metrics, printed as tables |
 | `figure.py`, `deltaf.py` | The convergence and single-run ΔF figures |
+| `overview.py` | The main README's figure: the reference and one OPES run, before and after correction |
 | `surfaces.py`, `differences.py` | The single-run surfaces and their errors, single and pooled |
 | `alanine_dipeptide_fes.dat` | The reference free energy surface |
 | `alanine-dipeptide.pdb` | The starting structure, from OpenMM's test systems |

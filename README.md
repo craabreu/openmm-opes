@@ -107,6 +107,17 @@ bandwidths, multiple walkers, extra biases and the combined sampler.
 ## Benchmarks
 
 <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/craabreu/openmm-opes/main/benchmarks/alanine-dipeptide/figures/overview-dark.png">
+  <img alt="Reference free energy surface of alanine dipeptide, and one 10 ns OPES run before and after the smoothing correction" src="https://raw.githubusercontent.com/craabreu/openmm-opes/main/benchmarks/alanine-dipeptide/figures/overview.png">
+</picture>
+
+The free energy surface of alanine dipeptide in vacuum, left, from a reference
+computed for this benchmark. Next to it is the surface a single 10 ns OPES run
+reports, before and after the smoothing correction. Its RMS deviation from the
+reference, where the reference is below 5 kcal/mol, drops from 0.17 to
+0.11 kcal/mol, typical of the 16 runs in the benchmark.
+
+<picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/craabreu/openmm-opes/main/benchmarks/alanine-dipeptide/figures/convergence-dark.png">
   <img alt="OPES and metadynamics on alanine dipeptide" src="https://raw.githubusercontent.com/craabreu/openmm-opes/main/benchmarks/alanine-dipeptide/figures/convergence.png">
 </picture>
