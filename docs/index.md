@@ -6,9 +6,9 @@ OPES is an enhanced sampling method that builds its bias from an on-the-fly
 estimate of the probability distribution along a few collective variables,
 instead of accumulating repulsive hills as metadynamics does. The bias soon
 becomes nearly static, so free energies converge quickly and reweighting is
-simple, and it needs only an expected barrier height, a deposition stride and
-a kernel bandwidth. openmm-opes implements it as a plain Python package on
-top of OpenMM, in the spirit of `openmm.app.Metadynamics`, validated against
+simple. It needs only an expected barrier height, a deposition stride and a
+kernel bandwidth. This package implements OPES in pure Python on top of
+OpenMM, in the spirit of `openmm.app.Metadynamics`, and is validated against
 PLUMED's `OPES_METAD` and `OPES_METAD_EXPLORE`.
 
 ## Features
@@ -20,10 +20,12 @@ PLUMED's `OPES_METAD` and `OPES_METAD_EXPLORE`.
 - **Multiple walkers** sharing one bias through a directory.
 - **Several samplers on one simulation,** with extra biases folded into the
   reweighting.
-- **Reweighting tools:** the time-dependent constant c(t), and PLUMED's `rct`.
+- **Reweighting tools:** the reweighting constant c(t), and PLUMED's `rct` as a
+  convergence check.
 - **Smoothing-corrected free energy surfaces.**
 - **Periodic, unbounded or reflective collective variables,** one to three of
-  them, with checkpoints through `getState` and `setState`.
+  them.
+- **Checkpoints** through `getState` and `setState`.
 
 ## Installation
 

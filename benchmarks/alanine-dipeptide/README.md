@@ -99,14 +99,14 @@ OPES gets the basin ΔF right far sooner: its average error stays below
 0.1 kcal/mol from 3 ns and below 0.05 from 10 ns, while metadynamics needs
 10 and 41 ns. By 50 ns, both are equally accurate. For the full surface, raw
 OPES trails metadynamics throughout. Panel c shows why: OPES's average surface
-carries a systematic error that metadynamics' does not, and the smoothing
-correction removes it.
+carries a systematic error, which metadynamics' barely does, and the
+smoothing correction removes it.
 
 ### Basin ΔF in a single run
 
 ![Basin free energy difference over time](figures/deltaf.png)
 
-Left, seed 1; right, all 16 runs. The black line is the reference and the
+Left, seed 1; right, all 16 runs. The black line is the reference, and the
 grey band spans ±0.1 kcal/mol around it. The corrected OPES curve coincides
 with the raw one, because the correction keeps each basin's total weight.
 
@@ -120,7 +120,7 @@ Single metadynamics runs wander much longer before settling.
 
 Seed 1 at 50 ns: the surfaces reported by OPES (**a**), by OPES with the
 smoothing correction (**b**), and by metadynamics (**c**). The raw OPES
-contours are jagged; the corrected ones are as smooth as metadynamics'.
+contours are jagged. The corrected ones are as smooth as metadynamics'.
 
 ### Errors, single run and pooled
 
@@ -152,15 +152,16 @@ any kernel estimate is the true distribution blurred by the kernels. That
 blur makes basin floors too high and steep walls too low, by an amount that
 grows with the kernel width squared. Silverman's rule narrows new kernels only
 slowly, and old kernels keep their width, so the blur fades slowly. ΔF
-between basins is immune, because blurring moves probability within a basin,
-not between basins. Narrow kernels also add noise. Metadynamics' surface comes
+between basins is barely affected, because blurring moves probability within
+a basin, not between basins. Narrow kernels also add noise. Metadynamics' surface comes
 from its bias, a sum of broad Gaussians, which is smooth and, at convergence,
 nearly unbiased here.
 
-The correction, `getFreeEnergy(correctSmoothing=True)`, uses a pilot estimate
-with kernels twice as wide, divides each kernel's weight by the pilot at its
-center, smooths that nearly flat ratio, and multiplies back. That removes the
-blur to leading order and keeps the noise of the broad kernels low. It needs
+The correction, `getFreeEnergy(correctSmoothing=True)`, starts from a pilot
+estimate with kernels twice as wide. It divides each kernel's weight by the
+pilot at its center, smooths that nearly flat ratio, and multiplies the pilot
+back in. That removes the blur to leading order and keeps the noise as low as
+that of the broad kernels. It needs
 the broadened kernels to be narrow compared with the basins, so it can do
 more harm than good very early in a run, while the kernels are still wide.
 Here it already helped at the first snapshot, after 1 ns. See the theory page

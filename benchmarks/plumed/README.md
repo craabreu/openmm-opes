@@ -9,8 +9,11 @@ These scripts compare openmm-opes with the reference implementation of OPES in
 | `dynamics.py`, `analyze_dynamics.py` | Do they converge alike in a simulation with a known free energy? |
 | `merge_accuracy.py` | Which kernel merge rule better preserves the density estimate? |
 
-`plumed_merge.py` holds PLUMED's merge rule, so that openmm-opes can be run
-with it. `common.py` holds shared constants.
+`plumed_merge.py` holds PLUMED's kernel merge rule. The scripts can swap it in
+for openmm-opes's own rule, to isolate the remaining differences: through
+`--plumed-merge` in `offline_parity.py`, and through the
+`openmm-opes-plumedmerge` implementation in `dynamics.py`. `common.py` holds
+shared constants.
 
 ## Setup
 
@@ -25,7 +28,7 @@ make -j 16 && make install
 export PLUMED=$HOME/plumed-opes
 ```
 
-**Python environment.** OpenMM, openmm-plumed and this package:
+**Python environment.** Install OpenMM, openmm-plumed and this package:
 
 ```bash
 conda create -n opes-bench -c conda-forge python=3.13 openmm openmm-plumed numpy scipy
@@ -54,9 +57,10 @@ LD_LIBRARY_PATH=$PLUMED/lib python offline_parity.py $PLUMED/bin/plumed parity-r
 
 The script generates a CV trajectory from overdamped dynamics on a double well
 at 900 K. PLUMED reads it with `plumed driver`. openmm-opes replays it through
-`OPES.stepTogether` with a stand-in for a Simulation, with the same order of
-bias evaluation and deposition. Both use adaptive bandwidths unless a case
-fixes them, and PLUMED's default kernel cutoff. The three `combined` cases run
+`OPES.stepTogether` with a stand-in for a Simulation, keeping the same order
+of bias evaluation and deposition. Both codes use adaptive bandwidths, unless
+a case fixes them, and PLUMED keeps its default kernel cutoff. The three
+`combined` cases run
 OPES and OPES-explore together on the same CV: two actions in PLUMED and a
 `CombinedOPES` in openmm-opes. The script reports each component's bias
 separately. All nine cases take a few minutes.
@@ -64,7 +68,7 @@ separately. All nine cases take a few minutes.
 ## Convergence in dynamics
 
 ```bash
-for impl in plumed openmm-opes; do
+for impl in plumed openmm-opes openmm-opes-plumedmerge; do
   for mode in opes explore com; do
     for seed in $(seq 1 24); do
       python dynamics.py $impl $mode $seed runs/${impl}_${mode}_${seed}.dat --ns 20
@@ -74,9 +78,9 @@ done
 python analyze_dynamics.py runs
 ```
 
-Remember the `LD_PRELOAD` for the PLUMED runs. Each run takes 10–20 minutes on
-one CPU core, so run them in parallel, for example with `xargs -P`. `com` runs
-OPES and OPES-explore together. PLUMED's log, about 1 GB per run, is
+The mode `com` runs OPES and OPES-explore together. Remember the `LD_PRELOAD`
+for the PLUMED runs. Each run takes 10–20 minutes on one CPU core, so run them
+in parallel, for example with `xargs -P`. PLUMED's log, about 1 GB per run, is
 discarded.
 
 ## Merge accuracy
@@ -87,9 +91,9 @@ python merge_accuracy.py
 
 ## Results
 
-These results come from PLUMED 2.10.1 and openmm-opes at 97fe927, which
-includes #17–#19, with the scripts here as they are. The combined cases use
-`CombinedOPES` from #23.
+These results come from PLUMED 2.10.1, with the scripts here as they are. The
+single-variant cases used openmm-opes at 97fe927, which includes #17–#19, and
+the combined cases used `CombinedOPES` from #23.
 
 **Offline parity.** Without `--plumed-merge`, the biases differ by 0.7–1.2
 kJ/mol RMS on the grid. The exception is 2D OPES-explore, at 8.9 kJ/mol,
@@ -105,15 +109,15 @@ The explore component, whose barrier is 15 kJ/mol here, differs by 0.02–0.16
 kJ/mol RMS on the grid, as standalone OPES-explore does at that barrier. That
 residual is PLUMED's kernel truncation, whose default cutoff shrinks with the
 barrier: with `KERNEL_CUTOFF=9` added to both PLUMED actions, every bias agrees
-within 0.01 kJ/mol. A fixed trajectory cannot couple the two components, since
-neither one's depositions depend on the other's bias; the dynamics below test
-that coupling.
+within 0.01 kJ/mol. A fixed trajectory cannot couple the two components,
+because neither one's depositions depend on the other's bias. The dynamics
+below test that coupling.
 
 **Dynamics.** These are 24 seeds per case, 20 ns each, with exact
 ΔF = 5.90 kJ/mol. The table shows the mean |ΔF − exact| ± standard error, in
 kJ/mol.
 
-| mode | time | PLUMED | openmm-opes | openmm-opes, PLUMED merge |
+| Mode | Time | PLUMED | openmm-opes | openmm-opes, PLUMED merge |
 |---|---|---|---|---|
 | OPES | 0.5 ns | 4.41 ± 0.50 | 4.49 ± 0.81 | 3.28 ± 0.53 |
 | OPES | 20 ns | 0.48 ± 0.08 | 0.46 ± 0.08 | 0.44 ± 0.07 |
@@ -125,10 +129,11 @@ kJ/mol.
 No difference between implementations exceeds 1.5 combined standard errors,
 and all three make about the same number of transitions between basins.
 
-The OPES + explore runs of openmm-opes use `CombinedOPES`. Run with the same
-seed, they follow the earlier runs, which used two separate samplers advanced
-by `OPES.stepTogether`, exactly for the first 6 ns, until rounding differences
-from summing the two biases in one force make them drift apart.
+The OPES + explore runs of openmm-opes use `CombinedOPES`. Earlier runs used
+two separate samplers advanced by `OPES.stepTogether`. With the same seed, the
+two versions follow exactly the same trajectory for the first 6 ns. After
+that, rounding differences from summing the two biases in one force make them
+drift apart.
 
 **Merge accuracy.** Against the uncompressed estimate, openmm-opes's
 mass-preserving merge has a mean absolute log-density error of 0.03–0.05.
