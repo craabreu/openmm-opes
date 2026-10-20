@@ -12,6 +12,7 @@ from copy import copy
 import numpy as np
 import openmm as mm
 from openmm import unit
+from scipy.special import logsumexp
 
 from .io import BiasSharer
 from .kde import CVSpace, OnlineKDE
@@ -56,6 +57,92 @@ class RunningAverage:
         """Restore from a :meth:`getState` snapshot."""
         self._num = int(state["num"])
         self._total = np.asarray(state["total"]).copy()
+
+
+def currentCt(logPDF, bias, kbt, periodic):
+    """c(t) for the current bias, from an estimate of the unbiased density.
+
+    c = -kT ln <exp(-beta V)>, averaged over the unbiased density P on the
+    grid, which equals kT ln <exp(beta V)> over the biased ensemble. On a
+    periodic grid, the last node along each axis repeats the first and is
+    left out of the sums.
+    """
+    logPDF = np.asarray(logPDF, dtype=float)
+    beta = 1 / kbt.value_in_unit(unit.kilojoules_per_mole)
+    exponent = logPDF - beta * bias.value_in_unit(unit.kilojoules_per_mole)
+    if periodic:
+        interior = (slice(None, -1),) * logPDF.ndim
+        logPDF, exponent = logPDF[interior], exponent[interior]
+    if not np.any(np.isfinite(logPDF)):
+        return float("nan") * unit.kilojoules_per_mole
+    c = -(logsumexp(exponent) - logsumexp(logPDF)) / beta
+    return c * unit.kilojoules_per_mole
+
+
+def runningCt(kde, initialBias, kbt):
+    """PLUMED's rct: kT ln of the mean sample weight, from a reweighted KDE.
+
+    As in PLUMED, the average includes one fictitious sample weighted by the
+    initial, flat bias, w_0 = exp(beta V_0), which keeps it defined from the
+    start.
+    """
+    beta = 1 / kbt.value_in_unit(unit.kilojoules_per_mole)
+    logW0 = beta * initialBias.value_in_unit(unit.kilojoules_per_mole)
+    logSum = np.logaddexp(logW0, kde.getLogSumWeights())
+    c = (logSum - np.log(kde.getNumSamples() + 1)) / beta
+    return c * unit.kilojoules_per_mole
+
+
+class ExtraBias:
+    """Energies of other biases acting on a simulation, for reweighting.
+
+    Each item is a force group (int), an OpenMM Force, whose group is read at
+    evaluation time, or an object with a ``getBiasEnergy(context)`` method,
+    such as another sampler. The whole energy of each group counts, so give
+    the extra biases groups of their own.
+    """
+
+    def __init__(self, items, ownGroup):
+        self._items = list(items or [])
+        self._ownGroup = ownGroup
+        for item in self._items:
+            if not (
+                isinstance(item, (int, mm.Force)) or hasattr(item, "getBiasEnergy")
+            ):
+                raise TypeError(
+                    "extraBias items must be force groups, Forces, or objects "
+                    "with a getBiasEnergy(context) method"
+                )
+
+    def __bool__(self) -> bool:
+        return bool(self._items)
+
+    def energy(self, context):
+        """The total extra bias energy in a Context."""
+        groups = set()
+        energy = 0.0 * unit.kilojoules_per_mole
+        for item in self._items:
+            if isinstance(item, int):
+                groups.add(item)
+            elif isinstance(item, mm.Force):
+                groups.add(item.getForceGroup())
+            else:
+                energy += item.getBiasEnergy(context)
+        if self._ownGroup in groups:
+            raise ValueError("extraBias includes the force group of this sampler")
+        if groups:
+            state = context.getState(getEnergy=True, groups=groups)
+            energy += state.getPotentialEnergy()
+        return energy
+
+
+def tabulatedFunction(widths, values, limits, periodic):
+    """A 1-3D OpenMM tabulated function; ``widths`` is empty in one dimension."""
+    if not widths:
+        return mm.Continuous1DFunction(values, *limits, periodic)
+    if len(widths) == 2:
+        return mm.Continuous2DFunction(*widths, values, *limits, periodic)
+    return mm.Continuous3DFunction(*widths, values, *limits, periodic)
 
 
 class OPES:
@@ -117,6 +204,14 @@ class OPES:
     minBandwidth: list of float, optional
         Per-CV floor on the bandwidth of new kernels. By default there is
         none, as in PLUMED, so that Silverman's rule alone sets bandwidths.
+    extraBias: list, optional
+        Other biases acting on the simulation, as PLUMED's EXTRA_BIAS: each
+        sample is weighted by exp(beta (V + V_extra)), so that the free energy
+        estimate removes them too. Items are force groups, Forces, or objects
+        with a ``getBiasEnergy(context)`` method, such as other samplers. The
+        bias itself still follows the density estimate as usual. In explore
+        mode, only the reweighted estimate changes; PLUMED offers EXTRA_BIAS
+        for OPES_METAD only.
     """
 
     def __init__(
@@ -139,6 +234,7 @@ class OPES:
         kernelShape: str = "gaussian",
         statsWindowSize: int = 10,
         minBandwidth=None,
+        extraBias=None,
     ):
         if not unit.is_quantity(temperature):
             temperature = temperature * unit.kelvin
@@ -223,19 +319,12 @@ class OPES:
         self._force = mm.CustomCVForce(energyFunction)
         for i, variable in enumerate(variables):
             self._force.addCollectiveVariable(f"cv{i}", variable.force)
-        if d == 1:
-            table = mm.Continuous1DFunction(initial, *self._limits, periodic)
-        elif d == 2:
-            table = mm.Continuous2DFunction(
-                *self._widths, initial, *self._limits, periodic
-            )
-        else:
-            table = mm.Continuous3DFunction(
-                *self._widths, initial, *self._limits, periodic
-            )
-        self._force.addTabulatedFunction("table", table)
+        self._force.addTabulatedFunction(
+            "table", tabulatedFunction(self._widths, initial, self._limits, periodic)
+        )
         self._force.setForceGroup(max(freeGroups))
         system.addForce(self._force)
+        self._extraBias = ExtraBias(extraBias, self._force.getForceGroup())
 
     def _validate(
         self, d, biasFactor, numPeriodics, freeGroups, userSuppliedBiasFactor
@@ -341,6 +430,38 @@ class OPES:
         never reaches the forces.
         """
         return -self._kbt * self._kde["total.rw"].getLogPDF()
+
+    def getCt(self, estimate="current"):
+        """c(t), the reweighting constant of the time-dependent bias.
+
+        Reweighting a sample taken at time t by exp(beta [V_t(s) - c(t)])
+        removes the bias even while it still changes. Two estimates are
+        available:
+
+        * ``"current"``: -kT ln <exp(-beta V_n)> over the reweighted density
+          estimate P_n, for the bias acting now. It needs a reasonable P_n
+          and is then unbiased.
+        * ``"running"``: PLUMED's ``rct`` component, kT ln of the mean weight
+          of all samples so far, including one fictitious sample under the
+          initial flat bias -barrier. It averages over past biases, so it
+          lags behind the current one. Like PLUMED, which warns against
+          reweighting with ``rct``, treat it as a convergence diagnostic: it
+          should level off as the bias converges. With ``extraBias``, the
+          weights include the extra biases.
+
+        The current estimate is NaN before the first kernel.
+        """
+        kde = self._kde["total.rw"]
+        if estimate == "running":
+            return runningCt(kde, -self.barrier, self._kbt)
+        if estimate == "current":
+            return currentCt(
+                kde.getLogPDF(),
+                self.getBias(),
+                self._kbt,
+                all(v.periodic for v in self.variables),
+            )
+        raise ValueError('estimate must be "current" or "running"')
 
     def getAverageDensity(self):
         """Z_n, the mean density over the explored CV space.
@@ -552,27 +673,46 @@ class OPES:
 
     def _onInterval(self, simulation) -> None:
         position = self.getCollectiveVariables(simulation)
+        step = simulation.currentStep
+        if not self._observe(position) or step % self.frequency != 0:
+            return
+        changed = self.addKernel(position, self._weightEnergy(simulation.context))
+        changed = self._share(step) or changed
+        if changed:
+            self.updateContext(simulation.context)
+
+    def _weightEnergy(self, context):
+        """The bias energy that weights a new kernel: V plus any extra bias."""
+        energy = self.getBiasEnergy(context)
+        if self._extraBias:
+            energy += self._extraBias.energy(context)
+        return energy
+
+    def _observe(self, position) -> bool:
+        """Fold a CV sample into the variance statistics.
+
+        Returns whether kernels may be deposited yet: not during warm-up, nor,
+        with an adaptive variance, before the first stats window has elapsed.
+        """
         if not self._warmupComplete:
             self._updateSampleStats(position)
             if self._counter >= self.warmupSteps // self.varianceFrequency:
                 self._finishWarmup()
-            return
+            return False
         if self._adaptiveVariance:
             self._updateSampleStats(position)
             if not self._kde[self._biasKey]:
                 if self._counter < self._tau:
-                    return
+                    return False
                 if self._counter == self._tau:
                     self._rescaleUnbiasedVariance()
-        if simulation.currentStep % self.frequency == 0:
-            changed = self.addKernel(position, self.getBiasEnergy(simulation.context))
-            if (
-                self.saveFrequency is not None
-                and simulation.currentStep % self.saveFrequency == 0
-            ):
-                changed = self._syncWithDisk() or changed
-            if changed:
-                self.updateContext(simulation.context)
+        return True
+
+    def _share(self, step) -> bool:
+        """Sync with peers if this is a save step; whether the bias changed."""
+        if self.saveFrequency is None or step % self.saveFrequency != 0:
+            return False
+        return self._syncWithDisk()
 
     def _rescaleUnbiasedVariance(self) -> None:
         """Turn the variance measured before the first kernel into a sampled one.

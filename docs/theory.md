@@ -62,12 +62,53 @@ $p^{\text{WT}}$ is about $\sqrt{\gamma}$ times wider than $P$, explore kernels
 start at $\sqrt{\gamma}\,\sigma^{(0)}$, with a fixed `biasWidth` still read as
 the unbiased $\sigma^{(0)}$.
 
+## OPES combined with OPES-explore
+
+`CombinedOPES` follows Ray and Rizzi (J. Chem. Theory Comput. 21, 58 (2025)).
+Both components deposit a kernel at the same steps and CV values. The explore
+component builds its target estimate from the unweighted samples, which feel
+the total bias $V^o + V^e$. The OPES component weights its kernels by its own
+bias only, $w_k = e^{\beta V^o_{k-1}(\mathbf{s}_k)}$, so its estimate is the
+distribution biased by $V^e$, not the unbiased one. The unbiased estimate
+reweights every sample by the total bias,
+
+$$P_n(\mathbf{s}) = \frac{\sum_k^n w_k\, G(\mathbf{s}, \mathbf{s}_k)}{\sum_k^n w_k},
+\qquad w_k = e^{\beta [V^o_{k-1}(\mathbf{s}_k) + V^e_{k-1}(\mathbf{s}_k)]}$$
+
+which is the paper's Eq. 14 accumulated on the fly, with kernels sized as in
+the explore component's reweighted estimate. The two biases share one force,
+so the CVs are computed once per step. At each deposition, the explore term is
+switched off for one evaluation of the bias force group to read $V^o$ alone.
+
 ## Free energy
 
 `getFreeEnergy()` always uses the importance-sampling estimate,
 $F_n = -\beta^{-1}\log P_n$. In standard OPES the direct and reweighted routes
 are equivalent; in explore mode they differ until convergence, and the
 reweighted one converges better.
+
+## Extra biases and c(t)
+
+With other biases $V_x$ acting on the simulation, the kernel weights become
+$w_k = e^{\beta [V_{k-1}(\mathbf{s}_k) + V_x(\mathbf{R}_k)]}$, so that $P_n$
+estimates the distribution with every bias removed. The OPES bias itself is
+built from $P_n$ as before.
+
+For a bias that changes in time, reweighting a sample taken at time $t$ by
+$e^{\beta [V_t(\mathbf{s}) - c(t)]}$ is exact, with
+
+$$c(t) = -\frac{1}{\beta}\ln \frac{\int P(\mathbf{s})\,
+e^{-\beta V_t(\mathbf{s})}\,d\mathbf{s}}{\int P(\mathbf{s})\,d\mathbf{s}}$$
+
+`getCt()` evaluates this on the grid with $P_n$ in place of $P$. It is
+unbiased once $P_n$ is, but wrong while $P_n$ still misses basins.
+`getCt("running")` is PLUMED's `rct`,
+$\beta^{-1}\ln[(w_0 + \sum_k w_k) / (n + 1)]$, the mean weight of all
+samples so far plus one fictitious sample under the initial flat bias,
+$w_0 = e^{-\beta\Delta E}$. It lags behind the current bias, since it
+averages over past ones, and PLUMED advises against reweighting with it: use
+it to check that the bias has converged. On alanine dipeptide, the
+current-bias estimate is the more accurate one after about 2 ns.
 
 ## Kernel compression
 

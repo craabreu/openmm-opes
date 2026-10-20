@@ -3,7 +3,7 @@
 [![CI](https://github.com/craabreu/openmm-opes/actions/workflows/ci.yml/badge.svg)](https://github.com/craabreu/openmm-opes/actions/workflows/ci.yml)
 
 An [OpenMM](https://openmm.org) implementation of On-the-fly Probability
-Enhanced Sampling (OPES) and OPES-explore.
+Enhanced Sampling (OPES), OPES-explore, and the two combined (OPES_COM).
 
 ## Installation
 
@@ -36,6 +36,8 @@ porting its `OPES`/`OnlineKDE` classes into a tested, documented package.
   [doi:10.1021/acs.jpclett.0c00497](https://doi.org/10.1021/acs.jpclett.0c00497)
 - Invernizzi & Parrinello, J. Chem. Theory Comput. 2022,
   [doi:10.1021/acs.jctc.2c00152](https://doi.org/10.1021/acs.jctc.2c00152)
+- Ray & Rizzi, J. Chem. Theory Comput. 2025,
+  [doi:10.1021/acs.jctc.4c01231](https://doi.org/10.1021/acs.jctc.4c01231)
 
 ## License
 

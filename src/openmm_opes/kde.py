@@ -647,6 +647,14 @@ class OnlineKDE:
                 - self._logSumW
             )
 
+    def getNumSamples(self) -> int:
+        """Number of samples deposited, however the kernels were merged."""
+        return sum(kernel.numSamples for kernel in self._kernels)
+
+    def getLogSumWeights(self) -> float:
+        """Log of the total sample weight, ln(sum_k w_k); -inf with no samples."""
+        return float(self._logSumW)
+
     def evaluate(self, point) -> float:
         """Log of the normalized density at a single point."""
         return self._logDensityAt(point) - self._logSumW
