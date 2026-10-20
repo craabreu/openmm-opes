@@ -11,6 +11,7 @@ Usage:
     python reference.py run METAD_DIR SEED OUTFILE [--ns 20]
     python reference.py kde RUNS_DIR OUTFILE [--kappa 800]
     python reference.py table NPZ OUTFILE
+    python reference.py plot NPZ OUTFILE
 
 ``run`` simulates under the static bias built from METAD_DIR/metad_*.npz and
 saves phi, psi and the bias energy felt every ps. ``kde`` reweights all
@@ -19,7 +20,8 @@ von Mises kernels of concentrations kappa and 2 kappa (1/rad^2; kappa = 800
 means a width of about 0.035 rad), extrapolated to zero kernel width, with
 jackknife standard errors over runs, and dF between the phi > 0 and phi < 0
 halves straight from the weighted samples. ``table`` writes that surface as a
-plain-text table with a header describing the system and the method.
+plain-text table with a header describing the system and the method, and
+``plot`` draws it with its standard error.
 """
 
 from __future__ import annotations
@@ -193,6 +195,55 @@ def write_table(npz, outfile):
     np.savetxt(outfile, table, fmt="%9.5f %9.5f %9.5f %8.5f", header=header)
 
 
+def plot(npz, outfile):
+    """Draw the reference surface and its standard error."""
+    import cmcrameri.cm as cmc
+    import matplotlib.pyplot as plt
+
+    data = np.load(npz)
+    fes, stderr, grid = data["fes"] / KCAL, data["stderr"] / KCAL, data["grid"]
+    closed = np.append(grid, np.pi)
+
+    def wrap(values):
+        return np.pad(values, ((0, 1), (0, 1)), mode="wrap")
+
+    plt.rcParams.update({"font.size": 8, "axes.linewidth": 0.8})
+    fig, axs = plt.subplots(1, 2, figsize=(7.0, 2.9), sharey=True, layout="constrained")
+    levels = np.arange(0, 12.5, 1)
+    filled = axs[0].contourf(
+        closed, closed, wrap(fes), levels=levels, cmap=cmc.devon, extend="max"
+    )
+    axs[0].contour(closed, closed, wrap(fes), levels=levels, colors="k", linewidths=0.3)
+    fig.colorbar(
+        filled, ax=axs[0], label=r"$F$ (kcal mol$^{-1}$)", ticks=range(0, 13, 2)
+    )
+    for name, (x, y) in {"C7eq": (-1.5, 1.2), "C7ax": (1.2, -1.0)}.items():
+        axs[0].annotate(name, (x, y), color="w", ha="center", fontsize="small")
+    axs[0].set(title="Free energy")
+    shown = np.where(fes < 12, stderr, np.nan)
+    axs[1].set_facecolor("0.85")
+    mesh = axs[1].pcolormesh(
+        grid,
+        grid,
+        shown,
+        cmap=cmc.lajolla,
+        vmin=0,
+        vmax=0.05,
+        shading="nearest",
+        rasterized=True,
+    )
+    axs[1].contour(closed, closed, wrap(fes), levels=levels, colors="k", linewidths=0.3)
+    fig.colorbar(
+        mesh, ax=axs[1], extend="max", label=r"Standard error (kcal mol$^{-1}$)"
+    )
+    axs[1].set(title=r"Standard error, where $F < 12$ kcal mol$^{-1}$")
+    for ax in axs:
+        ax.set_xlabel(r"$\phi$ (rad)")
+    axs[0].set_ylabel(r"$\psi$ (rad)")
+    for suffix in (".png", ".svg"):
+        fig.savefig(outfile.with_suffix(suffix), dpi=200)
+
+
 TABLE_HEADER = """\
 Reference free energy surface of alanine dipeptide in vacuum, F(phi, psi)
 Ramachandran free energy landscape (potential of mean force) of the backbone
@@ -238,13 +289,18 @@ def main():
     table = commands.add_parser("table")
     table.add_argument("npz", type=Path)
     table.add_argument("outfile", type=Path)
+    figure = commands.add_parser("plot")
+    figure.add_argument("npz", type=Path)
+    figure.add_argument("outfile", type=Path)
     args = parser.parse_args()
     if args.command == "run":
         simulate(args.metad_dir, args.seed, args.outfile, args.ns)
     elif args.command == "kde":
         estimate(args.runs_dir, args.outfile, args.kappa)
-    else:
+    elif args.command == "table":
         write_table(args.npz, args.outfile)
+    else:
+        plot(args.npz, args.outfile)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,11 @@ force, or as a reference potential of mean force for the alanine dipeptide
 Ramachandran plot. We found no published reference for this force field and
 these conditions.
 
+![Reference free energy surface of alanine dipeptide and its standard error](figures/reference.png)
+
+Left, the free energy surface, with the C7eq and C7ax minima marked. Right,
+its standard error where F is below 12 kcal/mol, with the same contours.
+
 | Property | Value |
 |---|---|
 | Force field | Amber ff14SB, OpenMM `amber14-all.xml` |
@@ -79,10 +84,10 @@ measured against the reference surface:
 
 ![Convergence of OPES and metadynamics against the reference surface](figures/convergence.png)
 
-**a**, The reference surface. **b**, Basin ΔF error. **c**, Surface RMSD of
-single runs. **d**, Surface RMSD of the surface averaged over all 16 runs,
-which removes most of the noise and leaves the systematic error. Bands in b
-and c are standard errors over runs.
+**a**, Basin ΔF error. **b**, Surface RMSD of single runs. **c**, Surface
+RMSD of the surface averaged over all 16 runs, which removes most of the
+noise and leaves the systematic error. Bands in a and b are standard errors
+over runs.
 
 | At 50 ns, kcal/mol | Basin ΔF error | Single-run surface RMSD | RMSD of the average surface |
 |---|---|---|---|
@@ -93,7 +98,7 @@ and c are standard errors over runs.
 OPES gets the basin ΔF right far sooner: its average error stays below
 0.1 kcal/mol from 3 ns and below 0.05 from 10 ns, while metadynamics needs
 10 and 41 ns. By 50 ns, both are equally accurate. For the full surface, raw
-OPES trails metadynamics throughout. Panel d shows why: OPES's average surface
+OPES trails metadynamics throughout. Panel c shows why: OPES's average surface
 carries a systematic error that metadynamics' does not, and the smoothing
 correction removes it.
 
@@ -159,6 +164,7 @@ python run.py metad SEED long/metad_SEED.npz --ns 500     # 4 seeds
 python reference.py run long SEED static/run_SEED.npy --ns 200   # 48 seeds
 python reference.py kde static reference.npz
 python reference.py table reference.npz alanine_dipeptide_fes.dat
+python reference.py plot reference.npz figures/reference
 
 # Analysis and figures
 python analyze.py runs --truth reference.npz
@@ -175,7 +181,7 @@ parallelize trivially. The results above come from openmm-opes at 35be0b0.
 | File | Contents |
 |---|---|
 | `run.py` | One OPES or metadynamics run, saving its surface every nanosecond |
-| `reference.py` | Runs under a fixed bias, the reference surface, and its table |
+| `reference.py` | Runs under a fixed bias, the reference surface, its table and its figure |
 | `analyze.py` | Convergence metrics, printed as tables |
 | `figure.py`, `deltaf.py`, `surfaces.py` | The three figures |
 | `alanine_dipeptide_fes.dat` | The reference free energy surface |
