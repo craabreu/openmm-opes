@@ -362,6 +362,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#other-biases-and-ct" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other biases and c(t)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#opes-combined-with-opes-explore" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OPES combined with OPES-explore
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#several-samplers-at-once" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -465,6 +487,28 @@
     <span class="md-ellipsis">
       
         Choosing the bandwidth
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other-biases-and-ct" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other biases and c(t)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#opes-combined-with-opes-explore" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OPES combined with OPES-explore
       
     </span>
   </a>
@@ -576,12 +620,49 @@ each variable's <code>biasWidth</code>. It is read as <span class="arithmatex">\
 deviation of the <strong>unbiased</strong> distribution, in both modes. OPES-explore
 kernels estimate the sampled distribution, which is <span class="arithmatex">\(\sqrt{\gamma}\)</span> times
 wider, so they are deposited <span class="arithmatex">\(\sqrt{\gamma}\)</span> times wider than <code>biasWidth</code>.</p>
+<h2 id="other-biases-and-ct">Other biases and c(t)</h2>
+<p>When other biases act on the simulation, such as a restraint you want removed
+from the free energy or another sampler, pass them as <code>extraBias</code>, as with
+PLUMED's EXTRA_BIAS. Each sample is then weighted by all of them, so
+<code>getFreeEnergy()</code> removes them too. Items can be force groups, <code>Force</code> objects
+or other samplers:</p>
+<div class="highlight"><pre><span></span><code><span class="n">restraint</span><span class="o">.</span><span class="n">setForceGroup</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>  <span class="c1"># give it a group of its own</span>
+<span class="n">sampler</span> <span class="o">=</span> <span class="n">OPES</span><span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="n">variables</span><span class="p">,</span> <span class="n">temperature</span><span class="p">,</span> <span class="n">barrier</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span>
+               <span class="n">extraBias</span><span class="o">=</span><span class="p">[</span><span class="n">restraint</span><span class="p">])</span>
+</code></pre></div>
+<p><code>getCt()</code> returns c(t), the constant that makes reweighting with a bias that
+still changes exact: a sample taken at time t gets weight
+exp(β[V_t(s) − c(t)]). The default estimate uses the current bias and density
+estimate. <code>getCt("running")</code> is PLUMED's <code>rct</code>. It lags behind the current
+bias, so treat it, as PLUMED does, as a convergence diagnostic that levels off
+once the bias converges, not as a reweighting constant.</p>
+<p><code>extraBias</code> also works in explore mode, where it changes only the reweighted
+free energy. PLUMED offers EXTRA_BIAS for OPES_METAD only.</p>
+<h2 id="opes-combined-with-opes-explore">OPES combined with OPES-explore</h2>
+<p><code>CombinedOPES</code> runs OPES and OPES-explore together on the same collective
+variables, the combined algorithm of Ray &amp; Rizzi, J. Chem. Theory Comput. 21,
+58 (2025), often called OPES_COM. The explore bias keeps pushing the system out
+of its minima, which helps when the CVs are suboptimal, while the OPES bias
+converges the free energy. It takes one barrier per component; the paper
+recommends an explore barrier below the OPES one.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">openmm_opes</span><span class="w"> </span><span class="kn">import</span> <span class="n">CombinedOPES</span>
+
+<span class="n">sampler</span> <span class="o">=</span> <span class="n">CombinedOPES</span><span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="n">variables</span><span class="p">,</span> <span class="n">temperature</span><span class="p">,</span> <span class="n">barrier</span><span class="o">=</span><span class="mi">40</span><span class="p">,</span>
+                       <span class="n">exploreBarrier</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">frequency</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">varianceFrequency</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span>
+<span class="n">sampler</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">simulation</span><span class="p">,</span> <span class="mi">1_000_000</span><span class="p">)</span>
+<span class="n">fes</span> <span class="o">=</span> <span class="n">sampler</span><span class="o">.</span><span class="n">getFreeEnergy</span><span class="p">()</span>
+</code></pre></div>
+<p>Neither component alone estimates the unbiased distribution: each one's
+samples also feel the other's bias. <code>getFreeEnergy()</code> therefore returns a
+separate estimate that reweights every sample by the total bias.
+<code>getComponentBiases()</code> and <code>getComponentBiasEnergies(context)</code> give the two
+parts separately.</p>
 <h2 id="several-samplers-at-once">Several samplers at once</h2>
-<p>Several samplers can bias the same simulation, each depositing kernels on its
-own schedule and weighting them by its own bias only, as several OPES actions
-do in a single PLUMED input. Create them all on the same <code>System</code> and advance
-the simulation with <code>OPES.stepTogether</code>. For example, OPES and OPES-explore
-combined (Ray &amp; Rizzi, J. Chem. Theory Comput. 21, 58 (2025)):</p>
+<p>More generally, several samplers can bias the same simulation, each depositing
+kernels on its own schedule and weighting them by its own bias only, as several
+OPES actions do in a single PLUMED input. Create them all on the same <code>System</code>
+and advance the simulation with <code>OPES.stepTogether</code>. For example, an OPES
+sampler on two CVs alongside an OPES-explore sampler on the first one:</p>
 <div class="highlight"><pre><span></span><code><span class="n">opes</span> <span class="o">=</span> <span class="n">OPES</span><span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="p">[</span><span class="n">cv1</span><span class="p">,</span> <span class="n">cv2</span><span class="p">],</span> <span class="n">temperature</span><span class="p">,</span> <span class="mi">55</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">50</span><span class="p">)</span>
 <span class="n">explore</span> <span class="o">=</span> <span class="n">OPES</span><span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="p">[</span><span class="n">cv1Copy</span><span class="p">],</span> <span class="n">temperature</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span> <span class="n">exploreMode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="n">simulation</span> <span class="o">=</span> <span class="n">app</span><span class="o">.</span><span class="n">Simulation</span><span class="p">(</span><span class="n">topology</span><span class="p">,</span> <span class="n">system</span><span class="p">,</span> <span class="n">integrator</span><span class="p">)</span>
@@ -589,7 +670,8 @@ combined (Ray &amp; Rizzi, J. Chem. Theory Comput. 21, 58 (2025)):</p>
 <span class="n">OPES</span><span class="o">.</span><span class="n">stepTogether</span><span class="p">(</span><span class="n">simulation</span><span class="p">,</span> <span class="p">[</span><span class="n">opes</span><span class="p">,</span> <span class="n">explore</span><span class="p">],</span> <span class="mi">1_000_000</span><span class="p">)</span>
 </code></pre></div>
 <p>Each variable's force is copied into its sampler's bias force, so pass every
-sampler its own <code>BiasVariable</code> objects. To reweight, add up the biases, which
+sampler its own <code>BiasVariable</code> objects. Each sampler's <code>getFreeEnergy()</code> is
+then biased by the others. To reweight, add up the biases, which
 <code>getBiasEnergy(simulation.context)</code> returns for each sampler.</p>
 
 

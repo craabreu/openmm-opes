@@ -433,10 +433,32 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#opes-combined-with-opes-explore" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OPES combined with OPES-explore
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#free-energy" class="md-nav__link">
     <span class="md-ellipsis">
       
         Free energy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extra-biases-and-ct" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra biases and c(t)
       
     </span>
   </a>
@@ -593,10 +615,32 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#opes-combined-with-opes-explore" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OPES combined with OPES-explore
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#free-energy" class="md-nav__link">
     <span class="md-ellipsis">
       
         Free energy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#extra-biases-and-ct" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra biases and c(t)
       
     </span>
   </a>
@@ -700,11 +744,43 @@ estimate in explore mode and the reweighted one otherwise. Because
 <span class="arithmatex">\(p^{\text{WT}}\)</span> is about <span class="arithmatex">\(\sqrt{\gamma}\)</span> times wider than <span class="arithmatex">\(P\)</span>, explore kernels
 start at <span class="arithmatex">\(\sqrt{\gamma}\,\sigma^{(0)}\)</span>, with a fixed <code>biasWidth</code> still read as
 the unbiased <span class="arithmatex">\(\sigma^{(0)}\)</span>.</p>
+<h2 id="opes-combined-with-opes-explore">OPES combined with OPES-explore</h2>
+<p><code>CombinedOPES</code> follows Ray and Rizzi (J. Chem. Theory Comput. 21, 58 (2025)).
+Both components deposit a kernel at the same steps and CV values. The explore
+component builds its target estimate from the unweighted samples, which feel
+the total bias <span class="arithmatex">\(V^o + V^e\)</span>. The OPES component weights its kernels by its own
+bias only, <span class="arithmatex">\(w_k = e^{\beta V^o_{k-1}(\mathbf{s}_k)}\)</span>, so its estimate is the
+distribution biased by <span class="arithmatex">\(V^e\)</span>, not the unbiased one. The unbiased estimate
+reweights every sample by the total bias,</p>
+<div class="arithmatex">\[P_n(\mathbf{s}) = \frac{\sum_k^n w_k\, G(\mathbf{s}, \mathbf{s}_k)}{\sum_k^n w_k},
+\qquad w_k = e^{\beta [V^o_{k-1}(\mathbf{s}_k) + V^e_{k-1}(\mathbf{s}_k)]}\]</div>
+<p>which is the paper's Eq. 14 accumulated on the fly, with kernels sized as in
+the explore component's reweighted estimate. The two biases share one force,
+so the CVs are computed once per step. At each deposition, the explore term is
+switched off for one evaluation of the bias force group to read <span class="arithmatex">\(V^o\)</span> alone.</p>
 <h2 id="free-energy">Free energy</h2>
 <p><code>getFreeEnergy()</code> always uses the importance-sampling estimate,
 <span class="arithmatex">\(F_n = -\beta^{-1}\log P_n\)</span>. In standard OPES the direct and reweighted routes
 are equivalent; in explore mode they differ until convergence, and the
 reweighted one converges better.</p>
+<h2 id="extra-biases-and-ct">Extra biases and c(t)</h2>
+<p>With other biases <span class="arithmatex">\(V_x\)</span> acting on the simulation, the kernel weights become
+<span class="arithmatex">\(w_k = e^{\beta [V_{k-1}(\mathbf{s}_k) + V_x(\mathbf{R}_k)]}\)</span>, so that <span class="arithmatex">\(P_n\)</span>
+estimates the distribution with every bias removed. The OPES bias itself is
+built from <span class="arithmatex">\(P_n\)</span> as before.</p>
+<p>For a bias that changes in time, reweighting a sample taken at time <span class="arithmatex">\(t\)</span> by
+<span class="arithmatex">\(e^{\beta [V_t(\mathbf{s}) - c(t)]}\)</span> is exact, with</p>
+<div class="arithmatex">\[c(t) = -\frac{1}{\beta}\ln \frac{\int P(\mathbf{s})\,
+e^{-\beta V_t(\mathbf{s})}\,d\mathbf{s}}{\int P(\mathbf{s})\,d\mathbf{s}}\]</div>
+<p><code>getCt()</code> evaluates this on the grid with <span class="arithmatex">\(P_n\)</span> in place of <span class="arithmatex">\(P\)</span>. It is
+unbiased once <span class="arithmatex">\(P_n\)</span> is, but wrong while <span class="arithmatex">\(P_n\)</span> still misses basins.
+<code>getCt("running")</code> is PLUMED's <code>rct</code>,
+<span class="arithmatex">\(\beta^{-1}\ln[(w_0 + \sum_k w_k) / (n + 1)]\)</span>, the mean weight of all
+samples so far plus one fictitious sample under the initial flat bias,
+<span class="arithmatex">\(w_0 = e^{-\beta\Delta E}\)</span>. It lags behind the current bias, since it
+averages over past ones, and PLUMED advises against reweighting with it: use
+it to check that the bias has converged. On alanine dipeptide, the
+current-bias estimate is the more accurate one after about 2 ns.</p>
 <h2 id="kernel-compression">Kernel compression</h2>
 <p>Rather than storing a bias grid, kernels closer than <code>compressionThreshold</code> in
 Mahalanobis distance are merged, preserving total weight, mean and second
