@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/craabreu/openmm-opes/actions/workflows/ci.yml/badge.svg)](https://github.com/craabreu/openmm-opes/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/openmm-opes)](https://pypi.org/project/openmm-opes/)
-[![Python](https://img.shields.io/pypi/pyversions/openmm-opes)](https://pypi.org/project/openmm-opes/)
+[![Conda](https://img.shields.io/conda/v/mdtools/openmm-opes)](https://anaconda.org/mdtools/openmm-opes)
 [![Docs](https://img.shields.io/badge/docs-latest-blue)](https://craabreu.github.io/openmm-opes)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
